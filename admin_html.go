@@ -65,7 +65,7 @@ tr:hover{background:var(--hover)}
 .form-row .form-group{flex:1}
 .modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,.4);display:none;align-items:center;justify-content:center;z-index:100}
 .modal-overlay.show{display:flex}
-.modal{background:var(--card);border:1px solid var(--border);border-radius:var(--radius);padding:24px;width:520px;max-width:90vw;max-height:85vh;overflow-y:auto;box-shadow:0 10px 40px rgba(0,0,0,.2)}
+.modal{background:var(--card);border:1px solid var(--border);border-radius:var(--radius);padding:24px;width:640px;max-width:95vw;max-height:88vh;overflow-y:auto;box-shadow:0 10px 40px rgba(0,0,0,.2)}
 .modal-title{font-size:18px;font-weight:600;margin-bottom:20px}
 .modal-actions{display:flex;gap:8px;justify-content:flex-end;margin-top:20px}
 .stats-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:16px;margin-bottom:20px}
@@ -245,13 +245,13 @@ tr:hover{background:var(--hover)}
 </div>
 <div class="form-group">
 <label>Base URL</label>
-<input class="input" id="provBaseUrl" placeholder="https://api.openai.com/v1">
+<input class="input" id="provBaseUrl" placeholder="https://api.openai.com/v1" oninput="this.value=this.value.trim()">
 </div>
 <div class="form-group">
 <label>API Keys (多Key轮询)</label>
 <div id="provKeysList" style="margin-bottom:8px"></div>
 <div style="display:flex;gap:8px">
-<input class="input" id="provKeyInput" placeholder="sk-..." style="flex:1" onkeydown="handleKeyKeydown(event)">
+<input class="input" id="provKeyInput" placeholder="sk-..." style="flex:1" oninput="this.value=this.value.trim()" onkeydown="handleKeyKeydown(event)">
 <input class="input" id="provKeyName" placeholder="备注(可选)" style="width:120px">
 <button class="btn btn-outline" onclick="addProvKey()">添加</button>
 </div>
@@ -259,7 +259,7 @@ tr:hover{background:var(--hover)}
 <div class="form-group">
 <label>支持的模型 (回车添加，或逗号分隔添加多个)</label>
 <div class="tag-input-wrap" id="provModelsWrap">
-<input class="tag-input" id="provModelInput" placeholder="输入模型名后回车..." onkeydown="handleModelKeydown(event)">
+<input class="tag-input" id="provModelInput" placeholder="输入模型名后回车..." oninput="this.value=this.value.trim()" onkeydown="handleModelKeydown(event)">
 </div>
 </div>
 <div class="form-group">
@@ -418,8 +418,8 @@ editingKeys.forEach((k,i)=>{
 const item=document.createElement('div');
 item.className='key-item';
 const isActive=(k.status||'active')==='active';
-let html='<span class="key-val" title="'+esc(k.key)+'">'+esc(k.key)+'</span>';
-if(k.name)html+='<span class="key-name">'+esc(k.name)+'</span>';
+let html='<input class="input key-edit-val" value="'+esc(k.key)+'" oninput="this.value=this.value.trim();editingKeys['+i+'].key=this.value" style="flex:1;font-size:12px;padding:4px 8px" title="可编辑">';
+html+='<input class="input key-edit-name" value="'+esc(k.name||'')+'" placeholder="备注" oninput="editingKeys['+i+'].name=this.value" style="width:100px;font-size:12px;padding:4px 8px">';
 html+='<span class="badge badge-'+(k.status||'active')+'">'+(k.status||'active')+'</span>';
 html+='<button class="copy-btn" onclick="toggleProvKey('+i+')" title="'+(isActive?'禁用':'启用')+'">'+(isActive?'⏸️':'▶️')+'</button>';
 html+='<button class="copy-btn" onclick="testProvKey('+i+')">测试</button>';
@@ -1031,7 +1031,17 @@ if(toastTimer)clearTimeout(toastTimer);
 toastTimer=setTimeout(()=>{el.style.display='none';el.className='';},3000);
 }
 
-document.querySelectorAll('.modal-overlay').forEach(o=>{o.addEventListener('click',e=>{if(e.target===o)o.classList.remove('show');});});
+// 弹窗：点击遮罩空白处关闭，但点击弹窗内容不关闭
+document.querySelectorAll('.modal-overlay').forEach(o=>{
+o.addEventListener('click',e=>{
+// 只有直接点击遮罩层本身才关闭，点击子元素(弹窗内容)不关闭
+if(e.target===o)o.classList.remove('show');
+});
+});
+// 阻止弹窗内容点击事件冒泡
+document.querySelectorAll('.modal').forEach(m=>{
+m.addEventListener('click',e=>{e.stopPropagation();});
+});
 
 initTheme();
 loadProviders();
