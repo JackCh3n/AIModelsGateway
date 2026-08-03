@@ -62,6 +62,12 @@ func loadConfig() *Config {
 	if cfg.Settings.DefaultModel == "" {
 		cfg.Settings.DefaultModel = "gpt-4o-mini"
 	}
+	// 确保每个 provider 的 DisabledModels 已初始化
+	for i := range cfg.Providers {
+		if cfg.Providers[i].DisabledModels == nil {
+			cfg.Providers[i].DisabledModels = []string{}
+		}
+	}
 	config = &cfg
 	return config
 }
@@ -127,6 +133,7 @@ func getActiveProvider() *Provider {
 
 func addProvider(p Provider) {
 	cfg := loadConfig()
+	ensureDisabledModelsInit(&p)
 	cfg.Providers = append(cfg.Providers, p)
 	saveConfig()
 }
@@ -135,6 +142,7 @@ func updateProvider(p Provider) bool {
 	cfg := loadConfig()
 	for i := range cfg.Providers {
 		if cfg.Providers[i].ID == p.ID {
+			ensureDisabledModelsInit(&p)
 			cfg.Providers[i] = p
 			saveConfig()
 			return true
@@ -168,6 +176,52 @@ func setActiveProvider(id string) bool {
 		}
 	}
 	return false
+}
+
+// --- 模型启用/禁用 ---
+
+// isModelEnabled 判断 provider 下的某模型是否启用
+func isModelEnabled(p *Provider, model string) bool {
+	for _, m := range p.DisabledModels {
+		if m == model {
+			return false
+		}
+	}
+	return true
+}
+
+// toggleModelEnabled 切换 provider 下某模型的启用状态
+func toggleModelEnabled(providerID, model string) bool {
+	cfg := loadConfig()
+	for i := range cfg.Providers {
+		if cfg.Providers[i].ID != providerID {
+			continue
+		}
+		disabled := false
+		for j, m := range cfg.Providers[i].DisabledModels {
+			if m == model {
+				cfg.Providers[i].DisabledModels = append(cfg.Providers[i].DisabledModels[:j], cfg.Providers[i].DisabledModels[j+1:]...)
+				disabled = true
+				break
+			}
+		}
+		if !disabled {
+			cfg.Providers[i].DisabledModels = append(cfg.Providers[i].DisabledModels, model)
+		}
+		if cfg.Providers[i].DisabledModels == nil {
+			cfg.Providers[i].DisabledModels = []string{}
+		}
+		saveConfig()
+		return true
+	}
+	return false
+}
+
+// ensureDisabledModelsInit 确保字段已初始化
+func ensureDisabledModelsInit(p *Provider) {
+	if p.DisabledModels == nil {
+		p.DisabledModels = []string{}
+	}
 }
 
 // --- APIKey CRUD ---

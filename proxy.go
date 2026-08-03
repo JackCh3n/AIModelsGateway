@@ -18,14 +18,28 @@ var httpClient = &http.Client{
 
 // proxyRequest 处理所有代理请求
 // clientFormat: "openai" 或 "anthropic" (客户端发来的格式)
-func proxyRequest(w http.ResponseWriter, r *http.Request, clientFormat string) {
+// providerOverride: 指定 provider（来自 URL 路径），为空则用活跃站点
+func proxyRequest(w http.ResponseWriter, r *http.Request, clientFormat string, providerOverride string) {
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
 		writeError(w, clientFormat, http.StatusBadRequest, "read body: "+err.Error())
 		return
 	}
 
-	provider := getActiveProvider()
+	var provider *Provider
+	if providerOverride != "" {
+		provider = getProvider(providerOverride)
+		if provider == nil {
+			writeError(w, clientFormat, http.StatusNotFound, "指定的中转站不存在: "+providerOverride)
+			return
+		}
+		if provider.Status != "active" {
+			writeError(w, clientFormat, http.StatusServiceUnavailable, "该中转站已禁用: "+provider.Name)
+			return
+		}
+	} else {
+		provider = getActiveProvider()
+	}
 	if provider == nil {
 		writeError(w, clientFormat, http.StatusServiceUnavailable, "没有可用的中转站，请在管理后台添加")
 		return
@@ -40,6 +54,21 @@ func proxyRequest(w http.ResponseWriter, r *http.Request, clientFormat string) {
 		model = getSettings().DefaultModel
 		params["model"] = model
 		body, _ = json.Marshal(params)
+	}
+
+	// 校验该模型是否在该站点已启用（仅当站点有模型列表时校验）
+	if len(provider.Models) > 0 {
+		inList := false
+		for _, m := range provider.Models {
+			if m == model {
+				inList = true
+				break
+			}
+		}
+		if inList && !isModelEnabled(provider, model) {
+			writeError(w, clientFormat, http.StatusForbidden, "该模型已被禁用: "+model+"（请在管理后台启用）")
+			return
+		}
 	}
 
 	log.Printf("[%s] provider=%s format=%s model=%s stream=%v",

@@ -73,17 +73,35 @@ func startServer(port int) error {
 
 	// OpenAI Chat Completions
 	chatHandler := authMiddleware(func(w http.ResponseWriter, r *http.Request) {
-		proxyRequest(w, r, "openai")
+		proxyRequest(w, r, "openai", "")
 	}, "openai")
 	mux.HandleFunc("/v1/chat/completions", chatHandler)
 	mux.HandleFunc("/chat/completions", chatHandler)
 
+	// 指定 provider 的 OpenAI 路径: /v1/chat/completions/p/{providerId}
+	chatProviderHandler := authMiddleware(func(w http.ResponseWriter, r *http.Request) {
+		pid := strings.TrimPrefix(r.URL.Path, "/v1/chat/completions/p/")
+		pid = strings.TrimPrefix(pid, "/chat/completions/p/")
+		proxyRequest(w, r, "openai", pid)
+	}, "openai")
+	mux.HandleFunc("/v1/chat/completions/p/", chatProviderHandler)
+	mux.HandleFunc("/chat/completions/p/", chatProviderHandler)
+
 	// Anthropic Messages
 	anthropicHandler := authMiddleware(func(w http.ResponseWriter, r *http.Request) {
-		proxyRequest(w, r, "anthropic")
+		proxyRequest(w, r, "anthropic", "")
 	}, "anthropic")
 	mux.HandleFunc("/v1/messages", anthropicHandler)
 	mux.HandleFunc("/messages", anthropicHandler)
+
+	// 指定 provider 的 Anthropic 路径: /v1/messages/p/{providerId}
+	anthropicProviderHandler := authMiddleware(func(w http.ResponseWriter, r *http.Request) {
+		pid := strings.TrimPrefix(r.URL.Path, "/v1/messages/p/")
+		pid = strings.TrimPrefix(pid, "/messages/p/")
+		proxyRequest(w, r, "anthropic", pid)
+	}, "anthropic")
+	mux.HandleFunc("/v1/messages/p/", anthropicProviderHandler)
+	mux.HandleFunc("/messages/p/", anthropicProviderHandler)
 
 	// 模型列表
 	modelsHandler := authMiddleware(func(w http.ResponseWriter, r *http.Request) {
@@ -95,6 +113,9 @@ func startServer(port int) error {
 		models := []map[string]any{}
 		if provider != nil {
 			for _, m := range provider.Models {
+				if !isModelEnabled(provider, m) {
+					continue
+				}
 				models = append(models, map[string]any{
 					"id":       m,
 					"object":   "model",

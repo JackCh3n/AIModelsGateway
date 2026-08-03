@@ -1,91 +1,125 @@
 package main
 
 const adminHTML = `<!DOCTYPE html>
-<html lang="zh-CN">
+<html lang="zh-CN" data-theme="light">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>AI Models Gateway</title>
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
-:root{--bg:#1a1a2e;--card:#16213e;--border:#0f3460;--accent:#e94560;--text:#eee;--muted:#999;--green:#4ecca3;--blue:#4fc3f7;--radius:8px}
-body{font-family:'Segoe UI',system-ui,sans-serif;background:var(--bg);color:var(--text);min-height:100vh}
-.header{background:var(--card);border-bottom:2px solid var(--accent);padding:16px 24px;display:flex;align-items:center;justify-content:space-between}
+/* 白色主题（默认） */
+:root{
+--bg:#f5f7fa;--card:#ffffff;--border:#e2e8f0;--accent:#3b82f6;--text:#1e293b;
+--muted:#64748b;--green:#10b981;--blue:#3b82f6;--red:#ef4444;--radius:8px;
+--shadow:0 1px 3px rgba(0,0,0,.08);--hover:#f1f5f9;--input-bg:#fff;--tag-bg:#e0e7ff;--tag-text:#3730a3
+}
+[data-theme="dark"]{
+--bg:#1a1a2e;--card:#16213e;--border:#0f3460;--accent:#e94560;--text:#eee;
+--muted:#999;--green:#4ecca3;--blue:#4fc3f7;--red:#e94560;--radius:8px;
+--shadow:0 1px 3px rgba(0,0,0,.3);--hover:rgba(255,255,255,.04);--input-bg:#1a1a2e;--tag-bg:rgba(79,195,247,.15);--tag-text:#4fc3f7
+}
+body{font-family:'Segoe UI',system-ui,sans-serif;background:var(--bg);color:var(--text);min-height:100vh;transition:background .2s,color .2s}
+.header{background:var(--card);border-bottom:2px solid var(--accent);padding:16px 24px;display:flex;align-items:center;justify-content:space-between;box-shadow:var(--shadow)}
+.header-left{display:flex;align-items:center;gap:16px}
 .header h1{font-size:20px;font-weight:600}
 .header h1 span{color:var(--accent)}
 .header .info{font-size:13px;color:var(--muted)}
+.header-right{display:flex;align-items:center;gap:12px}
+.theme-toggle{width:38px;height:38px;border-radius:50%;border:1px solid var(--border);background:var(--card);cursor:pointer;font-size:16px;display:flex;align-items:center;justify-content:center;transition:.2s}
+.theme-toggle:hover{border-color:var(--accent);transform:scale(1.05)}
 .container{max-width:1100px;margin:0 auto;padding:24px}
 .tabs{display:flex;gap:4px;margin-bottom:20px}
-.tab{padding:10px 20px;background:var(--card);border:none;border-radius:var(--radius) var(--radius) 0 0;cursor:pointer;color:var(--muted);font-size:14px;transition:.2s}
-.tab:hover{color:var(--text)}
-.tab.active{background:var(--border);color:var(--text)}
+.tab{padding:10px 20px;background:var(--card);border:1px solid var(--border);border-radius:var(--radius) var(--radius) 0 0;cursor:pointer;color:var(--muted);font-size:14px;transition:.2s}
+.tab:hover{color:var(--text);background:var(--hover)}
+.tab.active{background:var(--accent);color:#fff;border-color:var(--accent)}
 .panel{display:none}
 .panel.active{display:block}
-.card{background:var(--card);border:1px solid var(--border);border-radius:var(--radius);padding:20px;margin-bottom:16px}
+.card{background:var(--card);border:1px solid var(--border);border-radius:var(--radius);padding:20px;margin-bottom:16px;box-shadow:var(--shadow)}
 .card-title{font-size:16px;font-weight:600;margin-bottom:16px;display:flex;justify-content:space-between;align-items:center}
 table{width:100%;border-collapse:collapse;font-size:14px}
 th{text-align:left;padding:10px 12px;border-bottom:2px solid var(--border);color:var(--muted);font-weight:500;font-size:12px;text-transform:uppercase}
-td{padding:10px 12px;border-bottom:1px solid var(--border)}
-tr:hover{background:rgba(255,255,255,.03)}
+td{padding:10px 12px;border-bottom:1px solid var(--border);vertical-align:middle}
+tr:hover{background:var(--hover)}
 .badge{display:inline-block;padding:2px 8px;border-radius:4px;font-size:12px;font-weight:500}
-.badge-active{background:rgba(78,204,163,.15);color:var(--green)}
-.badge-disabled{background:rgba(233,69,96,.15);color:var(--accent)}
-.badge-openai{background:rgba(79,195,247,.15);color:var(--blue)}
-.badge-anthropic{background:rgba(233,69,96,.15);color:var(--accent)}
+.badge-active{background:rgba(16,185,129,.15);color:var(--green)}
+.badge-disabled{background:rgba(239,68,68,.15);color:var(--red)}
+.badge-openai{background:rgba(59,130,246,.15);color:var(--blue)}
+.badge-anthropic{background:rgba(239,68,68,.15);color:var(--red)}
 .badge-current{background:var(--accent);color:#fff}
 .btn{padding:8px 16px;border:none;border-radius:var(--radius);cursor:pointer;font-size:13px;font-weight:500;transition:.2s}
 .btn-primary{background:var(--accent);color:#fff}
-.btn-primary:hover{opacity:.85}
+.btn-primary:hover{opacity:.88}
 .btn-sm{padding:4px 10px;font-size:12px}
-.btn-danger{background:rgba(233,69,96,.2);color:var(--accent);border:1px solid rgba(233,69,96,.3)}
-.btn-danger:hover{background:rgba(233,69,96,.3)}
-.btn-success{background:rgba(78,204,163,.2);color:var(--green);border:1px solid rgba(78,204,163,.3)}
-.btn-success:hover{background:rgba(78,204,163,.3)}
+.btn-danger{background:rgba(239,68,68,.12);color:var(--red);border:1px solid rgba(239,68,68,.25)}
+.btn-danger:hover{background:rgba(239,68,68,.22)}
+.btn-success{background:rgba(16,185,129,.12);color:var(--green);border:1px solid rgba(16,185,129,.25)}
+.btn-success:hover{background:rgba(16,185,129,.22)}
 .btn-outline{background:transparent;border:1px solid var(--border);color:var(--text)}
 .btn-outline:hover{border-color:var(--accent)}
-.input,.select,textarea{width:100%;padding:8px 12px;background:var(--bg);border:1px solid var(--border);border-radius:var(--radius);color:var(--text);font-size:14px;font-family:inherit}
+.input,.select,textarea{width:100%;padding:8px 12px;background:var(--input-bg);border:1px solid var(--border);border-radius:var(--radius);color:var(--text);font-size:14px;font-family:inherit}
 .input:focus,.select:focus,textarea:focus{outline:none;border-color:var(--accent)}
 .form-group{margin-bottom:14px}
 .form-group label{display:block;margin-bottom:6px;font-size:13px;color:var(--muted)}
 .form-row{display:flex;gap:12px}
 .form-row .form-group{flex:1}
-.modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,.6);display:none;align-items:center;justify-content:center;z-index:100}
+.modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,.4);display:none;align-items:center;justify-content:center;z-index:100}
 .modal-overlay.show{display:flex}
-.modal{background:var(--card);border:1px solid var(--border);border-radius:var(--radius);padding:24px;width:500px;max-width:90vw;max-height:80vh;overflow-y:auto}
+.modal{background:var(--card);border:1px solid var(--border);border-radius:var(--radius);padding:24px;width:520px;max-width:90vw;max-height:85vh;overflow-y:auto;box-shadow:0 10px 40px rgba(0,0,0,.2)}
 .modal-title{font-size:18px;font-weight:600;margin-bottom:20px}
 .modal-actions{display:flex;gap:8px;justify-content:flex-end;margin-top:20px}
 .stats-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:16px;margin-bottom:20px}
-.stat-card{background:var(--card);border:1px solid var(--border);border-radius:var(--radius);padding:20px;text-align:center}
+.stat-card{background:var(--card);border:1px solid var(--border);border-radius:var(--radius);padding:20px;text-align:center;box-shadow:var(--shadow)}
 .stat-value{font-size:28px;font-weight:700;color:var(--accent)}
 .stat-label{font-size:13px;color:var(--muted);margin-top:4px}
 .toast{position:fixed;bottom:24px;right:24px;padding:12px 20px;border-radius:var(--radius);font-size:14px;z-index:200;animation:slideIn .3s}
 .toast-success{background:var(--green);color:#fff}
-.toast-error{background:var(--accent);color:#fff}
+.toast-error{background:var(--red);color:#fff}
 @keyframes slideIn{from{transform:translateX(100%);opacity:0}to{transform:translateX(0);opacity:1}}
 .empty{text-align:center;padding:40px;color:var(--muted)}
 .mono{font-family:'Courier New',monospace;font-size:13px}
 .test-result{margin-top:12px;padding:12px;border-radius:var(--radius);font-size:13px}
-.test-success{background:rgba(78,204,163,.1);border:1px solid rgba(78,204,163,.3)}
-.test-error{background:rgba(233,69,96,.1);border:1px solid rgba(233,69,96,.3)}
+.test-success{background:rgba(16,185,129,.08);border:1px solid rgba(16,185,129,.25)}
+.test-error{background:rgba(239,68,68,.08);border:1px solid rgba(239,68,68,.25)}
 .loading{display:inline-block;width:14px;height:14px;border:2px solid var(--border);border-top-color:var(--accent);border-radius:50%;animation:spin .6s linear infinite}
 @keyframes spin{to{transform:rotate(360deg)}}
 .config-box{background:var(--bg);border:1px solid var(--border);border-radius:var(--radius);padding:16px;margin-top:16px}
 .config-box h4{font-size:13px;color:var(--muted);margin-bottom:8px}
 .config-line{font-family:'Courier New',monospace;font-size:13px;padding:4px 0;color:var(--green)}
+/* 模型标签 */
+.tag-input-wrap{border:1px solid var(--border);border-radius:var(--radius);padding:6px 8px;background:var(--input-bg);display:flex;flex-wrap:wrap;gap:6px;align-items:center;min-height:38px}
+.tag-input-wrap:focus-within{border-color:var(--accent)}
+.tag{display:inline-flex;align-items:center;gap:4px;background:var(--tag-bg);color:var(--tag-text);padding:3px 8px;border-radius:4px;font-size:13px;font-family:'Courier New',monospace}
+.tag .tag-x{cursor:pointer;font-weight:700;opacity:.6;border:none;background:none;color:inherit;font-size:14px;padding:0;line-height:1}
+.tag .tag-x:hover{opacity:1}
+.tag-input{border:none;outline:none;background:transparent;color:var(--text);font-size:14px;font-family:inherit;flex:1;min-width:120px;padding:4px}
+/* 模型列表中的标签 */
+.model-chip{display:inline-flex;align-items:center;gap:6px;background:var(--tag-bg);color:var(--tag-text);padding:3px 8px;border-radius:4px;font-size:12px;font-family:'Courier New',monospace;margin:2px}
+.model-chip.disabled{opacity:.45;text-decoration:line-through}
+.model-chip .chip-toggle{cursor:pointer;border:none;background:none;color:inherit;font-size:12px;padding:0}
+.model-chip .chip-toggle:hover{opacity:.8}
+.model-row{margin-top:8px}
+.url-hint{font-size:11px;color:var(--muted);font-family:'Courier New',monospace;margin-top:4px;word-break:break-all}
+.expand-btn{font-size:12px;color:var(--accent);cursor:pointer;background:none;border:none;padding:2px 6px}
 </style>
 </head>
 <body>
 <div class="header">
+<div class="header-left">
 <h1>AI Models <span>Gateway</span></h1>
 <div class="info" id="headerInfo">加载中...</div>
 </div>
+<div class="header-right">
+<button class="theme-toggle" onclick="toggleTheme()" id="themeBtn" title="切换主题">🌙</button>
+</div>
+</div>
 <div class="container">
 <div class="tabs">
-<button class="tab active" onclick="switchTab('providers')">中转站管理</button>
-<button class="tab" onclick="switchTab('keys')">API Keys</button>
-<button class="tab" onclick="switchTab('stats')">用量统计</button>
-<button class="tab" onclick="switchTab('settings')">设置</button>
-<button class="tab" onclick="switchTab('config')">接入配置</button>
+<button class="tab active" onclick="switchTab(event,'providers')">中转站管理</button>
+<button class="tab" onclick="switchTab(event,'keys')">API Keys</button>
+<button class="tab" onclick="switchTab(event,'stats')">用量统计</button>
+<button class="tab" onclick="switchTab(event,'settings')">设置</button>
+<button class="tab" onclick="switchTab(event,'config')">接入配置</button>
 </div>
 
 <!-- 中转站管理 -->
@@ -152,6 +186,12 @@ tr:hover{background:rgba(255,255,255,.03)}
 <div class="config-line">Model: <span id="cfgModel2">gpt-4o-mini</span></div>
 </div>
 <div class="config-box">
+<h4>指定站点调用 (URL 路径)</h4>
+<p style="color:var(--muted);font-size:12px;margin-bottom:6px">在路径中加入 /p/{站点ID} 即可指定站点，模型在请求体中指定：</p>
+<div class="config-line">OpenAI: <span id="cfgPOpenAI">/v1/chat/completions/p/{站点ID}</span></div>
+<div class="config-line">Anthropic: <span id="cfgPAnthropic">/v1/messages/p/{站点ID}</span></div>
+</div>
+<div class="config-box">
 <h4>健康检查</h4>
 <div class="config-line">GET <span id="cfgHealthUrl">http://127.0.0.1:3458/health</span></div>
 </div>
@@ -171,7 +211,7 @@ tr:hover{background:rgba(255,255,255,.03)}
 <div class="form-row">
 <div class="form-group">
 <label>协议格式</label>
-<select class="select" id="provFormat" onchange="updateModelsPlaceholder()">
+<select class="select" id="provFormat">
 <option value="openai">OpenAI (Chat Completions)</option>
 <option value="anthropic">Anthropic (Messages)</option>
 </select>
@@ -193,8 +233,10 @@ tr:hover{background:rgba(255,255,255,.03)}
 <input class="input" id="provApiKey" placeholder="sk-..." type="password">
 </div>
 <div class="form-group">
-<label>支持的模型 (逗号分隔)</label>
-<textarea class="input" id="provModels" rows="3" placeholder="gpt-4o-mini, gpt-4o, claude-3-5-sonnet"></textarea>
+<label>支持的模型 (回车添加，或逗号分隔添加多个)</label>
+<div class="tag-input-wrap" id="provModelsWrap">
+<input class="tag-input" id="provModelInput" placeholder="输入模型名后回车..." onkeydown="handleModelKeydown(event)">
+</div>
 </div>
 <div class="form-group">
 <button class="btn btn-outline" onclick="testProvider()" id="testBtn">测试连接</button>
@@ -227,42 +269,102 @@ tr:hover{background:rgba(255,255,255,.03)}
 <script>
 const API='/admin/api';
 let activeProviderId='';
+let editingModels=[];
+let allProvidersCache=[];
 
-function switchTab(name){
+// --- 主题切换 ---
+function initTheme(){
+const saved=localStorage.getItem('aim-theme')||'light';
+document.documentElement.setAttribute('data-theme',saved);
+updateThemeBtn(saved);
+}
+function toggleTheme(){
+const cur=document.documentElement.getAttribute('data-theme');
+const next=cur==='dark'?'light':'dark';
+document.documentElement.setAttribute('data-theme',next);
+localStorage.setItem('aim-theme',next);
+updateThemeBtn(next);
+}
+function updateThemeBtn(t){
+document.getElementById('themeBtn').textContent=t==='dark'?'☀️':'🌙';
+document.getElementById('themeBtn').title=t==='dark'?'切换到白天模式':'切换到夜间模式';
+}
+
+function switchTab(e,name){
 document.querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));
 document.querySelectorAll('.panel').forEach(p=>p.classList.remove('active'));
-event.target.classList.add('active');
+e.target.classList.add('active');
 document.getElementById('panel-'+name).classList.add('active');
 if(name==='stats')loadStats();
 if(name==='config')loadConfig();
 if(name==='settings')loadSettings();
 }
 
+// --- 模型标签输入 ---
+function renderModelTags(){
+const wrap=document.getElementById('provModelsWrap');
+const input=document.getElementById('provModelInput');
+// 清除旧标签
+wrap.querySelectorAll('.tag').forEach(t=>t.remove());
+editingModels.forEach((m,i)=>{
+const tag=document.createElement('span');
+tag.className='tag';
+tag.innerHTML=esc(m)+'<button class="tag-x" onclick="removeModelTag('+i+')">×</button>';
+wrap.insertBefore(tag,input);
+});
+}
+function addModelTag(val){
+val=(val||'').trim();
+if(!val)return;
+// 支持逗号分隔多个
+const parts=val.split(',').map(s=>s.trim()).filter(s=>s);
+for(const p of parts){
+if(p&&!editingModels.includes(p))editingModels.push(p);
+}
+document.getElementById('provModelInput').value='';
+renderModelTags();
+}
+function removeModelTag(i){
+editingModels.splice(i,1);
+renderModelTags();
+}
+function handleModelKeydown(e){
+if(e.key==='Enter'||e.key===','){
+e.preventDefault();
+addModelTag(e.target.value);
+}else if(e.key==='Backspace'&&e.target.value===''){
+editingModels.pop();
+renderModelTags();
+}
+}
+
 // --- Providers ---
 async function loadProviders(){
 const res=await fetch(API+'/providers');
 const data=await res.json();
+allProvidersCache=data||[];
 const el=document.getElementById('providerList');
 if(!data||data.length===0){
 el.innerHTML='<div class="empty">暂无中转站，点击右上角添加</div>';
 document.getElementById('headerInfo').textContent='未配置中转站';
 return;
 }
-// 获取设置中的活跃站点
 const sRes=await fetch(API+'/settings');
 const settings=await sRes.json();
 activeProviderId=settings.activeProviderId||'';
 
-let html='<table><tr><th>名称</th><th>格式</th><th>Base URL</th><th>模型数</th><th>请求数</th><th>Token总量</th><th>状态</th><th>操作</th></tr>';
+let html='<table><tr><th>名称</th><th>格式</th><th>Base URL</th><th>模型</th><th>请求数</th><th>状态</th><th>操作</th></tr>';
 for(const p of data){
 const isActive=p.id===activeProviderId;
+const disabledSet=new Set(p.disabledModels||[]);
+const enabledCount=(p.models||[]).filter(m=>!disabledSet.has(m)).length;
+const totalCount=(p.models||[]).length;
 html+='<tr>';
 html+='<td>'+esc(p.name)+(isActive?' <span class="badge badge-current">当前</span>':'')+'</td>';
 html+='<td><span class="badge badge-'+p.format+'">'+p.format+'</span></td>';
 html+='<td class="mono">'+esc(p.baseUrl)+'</td>';
-html+='<td>'+(p.models?p.models.length:0)+'</td>';
+html+='<td>'+enabledCount+'/'+totalCount+' <button class="expand-btn" onclick="toggleModels(\''+p.id+'\')">展开</button></td>';
 html+='<td>'+p.usageCount+'</td>';
-html+='<td>'+(p.totalTokens||0).toLocaleString()+'</td>';
 html+='<td><span class="badge badge-'+p.status+'">'+p.status+'</span></td>';
 html+='<td>';
 if(!isActive&&p.status==='active')html+='<button class="btn btn-sm btn-success" onclick="setActive(\''+p.id+'\')">启用</button> ';
@@ -270,6 +372,18 @@ html+='<button class="btn btn-sm btn-outline" onclick="editProvider(\''+p.id+'\'
 html+='<button class="btn btn-sm btn-danger" onclick="deleteProvider(\''+p.id+'\')">删除</button>';
 html+='</td>';
 html+='</tr>';
+// 模型展开行
+html+='<tr id="models-'+p.id+'" style="display:none"><td colspan="7"><div class="model-row">';
+for(const m of (p.models||[])){
+const enabled=!disabledSet.has(m);
+html+='<span class="model-chip'+(enabled?'':' disabled')+'">';
+html+='<button class="chip-toggle" onclick="toggleModel(\''+p.id+'\',\''+esc(m)+'\')" title="'+(enabled?'点击禁用':'点击启用')+'">'+(enabled?'✅':'⏸️')+'</button> ';
+html+=esc(m);
+html+=' <span class="url-hint" style="display:block">'+getModelUrl(p,m)+'</span>';
+html+='</span>';
+}
+if(!p.models||p.models.length===0)html+='<span class="empty" style="padding:8px">暂无模型</span>';
+html+='</div></td></tr>';
 }
 html+='</table>';
 el.innerHTML=html;
@@ -281,7 +395,32 @@ document.getElementById('headerInfo').textContent='未设置活跃站点';
 }
 }
 
-function showProviderModal(p){
+function getModelUrl(p,model){
+const base=location.protocol+'//'+location.host;
+if(p.format==='anthropic'){
+return base+'/v1/messages/p/'+p.id+'  (model: '+model+')';
+}
+return base+'/v1/chat/completions/p/'+p.id+'  (model: '+model+')';
+}
+
+function toggleModels(id){
+const row=document.getElementById('models-'+id);
+row.style.display=row.style.display==='none'?'table-row':'none';
+}
+
+async function toggleModel(providerId,model){
+const url=API+'/providers/models/toggle/'+providerId+'?model='+encodeURIComponent(model);
+const res=await fetch(url,{method:'PUT'});
+if(res.ok){
+const data=await res.json();
+toast(data.enabled?'已启用: '+model:'已禁用: '+model,'success');
+loadProviders();
+}else{
+toast('操作失败','error');
+}
+}
+
+function showProviderModal(){
 document.getElementById('providerModalTitle').textContent='添加中转站';
 document.getElementById('provId').value='';
 document.getElementById('provName').value='';
@@ -289,15 +428,14 @@ document.getElementById('provFormat').value='openai';
 document.getElementById('provStatus').value='active';
 document.getElementById('provBaseUrl').value='';
 document.getElementById('provApiKey').value='';
-document.getElementById('provModels').value='';
+editingModels=[];
+renderModelTags();
 document.getElementById('testResult').innerHTML='';
 document.getElementById('providerModal').classList.add('show');
 }
 
 async function editProvider(id){
-const res=await fetch(API+'/providers');
-const data=await res.json();
-const p=data.find(x=>x.id===id);
+const p=allProvidersCache.find(x=>x.id===id);
 if(!p)return;
 document.getElementById('providerModalTitle').textContent='编辑中转站';
 document.getElementById('provId').value=p.id;
@@ -306,24 +444,33 @@ document.getElementById('provFormat').value=p.format;
 document.getElementById('provStatus').value=p.status;
 document.getElementById('provBaseUrl').value=p.baseUrl;
 document.getElementById('provApiKey').value=p.apiKey;
-document.getElementById('provModels').value=(p.models||[]).join(', ');
+editingModels=[...(p.models||[])];
+renderModelTags();
 document.getElementById('testResult').innerHTML='';
 document.getElementById('providerModal').classList.add('show');
 }
 
 async function saveProvider(){
 const id=document.getElementById('provId').value;
-const models=document.getElementById('provModels').value.split(',').map(s=>s.trim()).filter(s=>s);
+// 合并输入框中未提交的内容
+const inputVal=document.getElementById('provModelInput').value;
+if(inputVal.trim())addModelTag(inputVal);
 const body={
 name:document.getElementById('provName').value,
 format:document.getElementById('provFormat').value,
 status:document.getElementById('provStatus').value,
 baseUrl:document.getElementById('provBaseUrl').value,
 apiKey:document.getElementById('provApiKey').value,
-models:models
+models:[...editingModels],
+disabledModels:[]
 };
 if(!body.name||!body.baseUrl){
 toast('请填写名称和 Base URL','error');return;
+}
+// 编辑时保留 disabledModels
+if(id){
+const old=allProvidersCache.find(x=>x.id===id);
+if(old)body.disabledModels=old.disabledModels||[];
 }
 const method=id?'PUT':'POST';
 const url=id?API+'/providers/'+id:API+'/providers';
@@ -348,27 +495,19 @@ const res=await fetch(API+'/providers/active/'+id,{method:'PUT'});
 if(res.ok){toast('已设为当前站点','success');loadProviders();}
 }
 
-function updateModelsPlaceholder(){
-const fmt=document.getElementById('provFormat').value;
-const ta=document.getElementById('provModels');
-if(fmt==='anthropic'){
-ta.placeholder='claude-3-5-sonnet-20241022, claude-3-opus';
-}else{
-ta.placeholder='gpt-4o-mini, gpt-4o, deepseek-chat';
-}
-}
-
 async function testProvider(){
 const btn=document.getElementById('testBtn');
 const result=document.getElementById('testResult');
 btn.innerHTML='<span class="loading"></span> 测试中...';
 btn.disabled=true;
 result.innerHTML='';
+const inputVal=document.getElementById('provModelInput').value;
+if(inputVal.trim())addModelTag(inputVal);
 const body={
 baseUrl:document.getElementById('provBaseUrl').value,
 apiKey:document.getElementById('provApiKey').value,
 format:document.getElementById('provFormat').value,
-model:document.getElementById('provModels').value.split(',')[0].trim()||'gpt-4o-mini'
+model:editingModels[0]||'gpt-4o-mini'
 };
 if(!body.baseUrl||!body.apiKey){
 result.innerHTML='<div class="test-error">请填写 Base URL 和 API Key</div>';
@@ -451,7 +590,6 @@ statCard((stats.totalInput||0).toLocaleString(),'输入 Token')+
 statCard((stats.totalOutput||0).toLocaleString(),'输出 Token')+
 statCard((stats.totalTokens||0).toLocaleString(),'Token 总量');
 
-// 按站点
 let bp='<table><tr><th>站点</th><th>请求数</th><th>输入Token</th><th>输出Token</th><th>总量</th></tr>';
 const providers=stats.byProvider||{};
 for(const[name,v]of Object.entries(providers)){
@@ -461,7 +599,6 @@ if(Object.keys(providers).length===0)bp+='<tr><td colspan="5" class="empty">暂�
 bp+='</table>';
 document.getElementById('statsByProvider').innerHTML=bp;
 
-// 按模型
 let bm='<table><tr><th>模型</th><th>请求数</th><th>输入Token</th><th>输出Token</th><th>总量</th></tr>';
 const models=stats.byModel||{};
 for(const[name,v]of Object.entries(models)){
@@ -471,7 +608,6 @@ if(Object.keys(models).length===0)bm+='<tr><td colspan="5" class="empty">暂无�
 bm+='</table>';
 document.getElementById('statsByModel').innerHTML=bm;
 
-// 日志
 let lg='<table><tr><th>时间</th><th>站点</th><th>模型</th><th>格式</th><th>输入</th><th>输出</th></tr>';
 for(const l of (logs||[]).slice(0,50)){
 lg+='<tr><td>'+fmtDate(l.timestamp)+'</td><td>'+esc(l.providerName)+'</td><td class="mono">'+esc(l.model)+'</td><td>'+l.clientFormat+'</td><td>'+l.inputTokens+'</td><td>'+l.outputTokens+'</td></tr>';
@@ -506,11 +642,13 @@ const base='http://'+location.hostname+':'+port;
 document.getElementById('cfgOpenAIUrl').textContent=base+'/v1';
 document.getElementById('cfgAnthropicUrl').textContent=base;
 document.getElementById('cfgHealthUrl').textContent=base+'/health';
+document.getElementById('cfgPOpenAI').textContent=base+'/v1/chat/completions/p/{站点ID}';
+document.getElementById('cfgPAnthropic').textContent=base+'/v1/messages/p/{站点ID}';
 }
 
 // --- Utils ---
 function closeModal(id){document.getElementById(id).classList.remove('show');}
-function esc(s){return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
+function esc(s){return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');}
 function fmtDate(s){if(!s)return'-';const d=new Date(s);return d.toLocaleString('zh-CN',{month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'});}
 function toast(msg,type){
 const el=document.getElementById('toast');
@@ -519,10 +657,9 @@ el.textContent=msg;
 setTimeout(()=>{el.className='';},3000);
 }
 
-// 点击遮罩关闭
 document.querySelectorAll('.modal-overlay').forEach(o=>{o.addEventListener('click',e=>{if(e.target===o)o.classList.remove('show');});});
 
-// 初始化
+initTheme();
 loadProviders();
 loadKeys();
 </script>

@@ -35,9 +35,12 @@ func registerAdminRoutes(mux *http.ServeMux) {
 				p.Format = "openai"
 			}
 			if p.Models == nil {
-				p.Models = []string{}
-			}
-			addProvider(p)
+			p.Models = []string{}
+		}
+		if p.DisabledModels == nil {
+			p.DisabledModels = []string{}
+		}
+		addProvider(p)
 			writeJSON(w, http.StatusOK, p)
 		default:
 			writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
@@ -87,6 +90,38 @@ func registerAdminRoutes(mux *http.ServeMux) {
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+	}))
+
+	// 切换模型启用/禁用: PUT /admin/api/providers/{id}/models/toggle?model=xxx
+	mux.HandleFunc("/admin/api/providers/models/toggle/", corsHandler(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != "PUT" {
+			writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "PUT required"})
+			return
+		}
+		path := strings.TrimPrefix(r.URL.Path, "/admin/api/providers/models/toggle/")
+		parts := strings.SplitN(path, "/", 2)
+		if len(parts) < 1 || parts[0] == "" {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "provider id required"})
+			return
+		}
+		providerID := parts[0]
+		model := r.URL.Query().Get("model")
+		if model == "" {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "model query param required"})
+			return
+		}
+		if !toggleModelEnabled(providerID, model) {
+			writeJSON(w, http.StatusNotFound, map[string]string{"error": "provider not found"})
+			return
+		}
+		p := getProvider(providerID)
+		writeJSON(w, http.StatusOK, map[string]any{
+			"status":          "ok",
+			"providerId":      providerID,
+			"model":           model,
+			"enabled":         isModelEnabled(p, model),
+			"disabledModels":  p.DisabledModels,
+		})
 	}))
 
 	// API Key CRUD
