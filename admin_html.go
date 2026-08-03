@@ -303,7 +303,7 @@ tr:hover{background:var(--hover)}
 </div>
 </div>
 
-<div id="toast"></div>
+<div id="toast" style="display:none"></div>
 
 <script>
 const API='/admin/api';
@@ -440,9 +440,9 @@ document.getElementById('headerInfo').textContent='未设置活跃站点';
 function getModelUrl(p,model){
 const base=location.protocol+'//'+location.host;
 if(p.format==='anthropic'){
-return base+'/v1/messages/p/'+p.id+'  (model: '+model+')';
+return base+'/v1/messages/p/'+p.id;
 }
-return base+'/v1/chat/completions/p/'+p.id+'  (model: '+model+')';
+return base+'/v1/chat/completions/p/'+p.id;
 }
 
 function toggleModels(id){
@@ -821,11 +821,14 @@ document.getElementById('cfgPAnthropic').textContent=base+'/v1/messages/p/{站�
 function closeModal(id){document.getElementById(id).classList.remove('show');}
 function esc(s){return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');}
 function fmtDate(s){if(!s)return'-';const d=new Date(s);return d.toLocaleString('zh-CN',{month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'});}
+let toastTimer=null;
 function toast(msg,type){
 const el=document.getElementById('toast');
 el.className='toast toast-'+type;
 el.textContent=msg;
-setTimeout(()=>{el.className='';},3000);
+el.style.display='block';
+if(toastTimer)clearTimeout(toastTimer);
+toastTimer=setTimeout(()=>{el.style.display='none';el.className='';},3000);
 }
 
 document.querySelectorAll('.modal-overlay').forEach(o=>{o.addEventListener('click',e=>{if(e.target===o)o.classList.remove('show');});});
