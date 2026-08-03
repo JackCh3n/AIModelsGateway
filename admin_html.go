@@ -146,10 +146,9 @@ tr:hover{background:var(--hover)}
 <!-- 中转站管理 -->
 <div class="panel active" id="panel-providers">
 <div class="card">
-<div class="card-title">中转站列表 <div style="display:flex;gap:8px"><button class="btn btn-outline" onclick="importProvider()">导入配置</button><button class="btn btn-outline" onclick="importOpenCode()">导入OpenCode</button><button class="btn btn-primary" onclick="showProviderModal()">+ 添加中转站</button></div></div>
+<div class="card-title">中转站列表 <div style="display:flex;gap:8px"><button class="btn btn-outline" onclick="importProvider()">导入配置</button><button class="btn btn-outline" onclick="showOpenCodeModal()">导入OpenCode</button><button class="btn btn-primary" onclick="showProviderModal()">+ 添加中转站</button></div></div>
 <div id="providerList"></div>
 <input type="file" id="importFile" accept=".json" style="display:none" onchange="handleImportFile(event)">
-<input type="file" id="importOpenCodeFile" accept=".json" style="display:none" onchange="handleImportOpenCodeFile(event)">
 </div>
 </div>
 
@@ -333,6 +332,19 @@ tr:hover{background:var(--hover)}
 <div class="modal-actions">
 <button class="btn btn-outline" onclick="closeModal('providerModal')">取消</button>
 <button class="btn btn-primary" onclick="saveProvider()">保存</button>
+</div>
+</div>
+</div>
+
+<!-- OpenCode Import Modal -->
+<div class="modal-overlay" id="opencodeModal">
+<div class="modal">
+<div class="modal-title">导入 OpenCode 配置</div>
+<p style="color:var(--muted);font-size:13px;margin-bottom:8px">粘贴 OpenCode 的 JSON 配置（含 provider.openai/anthropic）：</p>
+<textarea class="input" id="opencodeInput" placeholder='{"provider":{"openai":{"options":{"baseURL":"https://...","apiKey":"sk-..."},"models":{...}}}}' style="width:100%;min-height:280px;resize:vertical;font-family:'Courier New',monospace;font-size:12px"></textarea>
+<div class="modal-actions">
+<button class="btn btn-outline" onclick="closeModal('opencodeModal')">取消</button>
+<button class="btn btn-primary" onclick="submitOpenCode()">导入</button>
 </div>
 </div>
 </div>
@@ -1180,32 +1192,31 @@ function importProvider(){
 document.getElementById('importFile').click();
 }
 
-function importOpenCode(){
-document.getElementById('importOpenCodeFile').click();
+function showOpenCodeModal(){
+document.getElementById('opencodeInput').value='';
+document.getElementById('opencodeModal').classList.add('show');
 }
 
-async function handleImportOpenCodeFile(event){
-const file=event.target.files[0];
-if(!file)return;
-const text=await file.text();
+async function submitOpenCode(){
+const text=document.getElementById('opencodeInput').value.trim();
+if(!text){toast('请粘贴配置内容','error');return;}
 let parsed;
 try{
 parsed=JSON.parse(text);
 }catch(e){
-toast('文件格式错误: '+e.message,'error');
-event.target.value='';
+toast('JSON格式错误: '+e.message,'error');
 return;
 }
 const res=await fetch(API+'/providers/import/opencode',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(parsed)});
 if(res.ok){
 const p=await res.json();
+closeModal('opencodeModal');
 toast('导入成功: '+(p.name||'')+' ('+(p.models||[]).length+' 个模型)','success');
 loadProviders();
 }else{
 const err=await res.json().catch(()=>({}));
 toast('导入失败: '+(err.error||''),'error');
 }
-event.target.value='';
 }
 
 async function handleImportFile(event){
