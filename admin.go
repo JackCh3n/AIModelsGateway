@@ -6,6 +6,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -237,7 +238,32 @@ func registerAdminRoutes(mux *http.ServeMux) {
 	}))
 
 	mux.HandleFunc("/admin/api/logs", corsHandler(func(w http.ResponseWriter, r *http.Request) {
-		writeJSON(w, http.StatusOK, getRecentLogs(100))
+		page, _ := strconv.Atoi(r.URL.Query().Get("page"))
+		if page < 1 {
+			page = 1
+		}
+		pageSize, _ := strconv.Atoi(r.URL.Query().Get("pageSize"))
+		if pageSize <= 0 {
+			pageSize = 50
+		}
+		logs, total := getRecentLogs(page, pageSize)
+		writeJSON(w, http.StatusOK, map[string]any{
+			"logs":     logs,
+			"total":    total,
+			"page":     page,
+			"pageSize": pageSize,
+			"pages":    (total + pageSize - 1) / pageSize,
+		})
+	}))
+
+	// 清空日志
+	mux.HandleFunc("/admin/api/logs/clear", corsHandler(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != "POST" {
+			writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "POST required"})
+			return
+		}
+		clearLogs()
+		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 	}))
 
 	// 设置

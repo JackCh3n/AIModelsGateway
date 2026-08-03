@@ -184,8 +184,9 @@ tr:hover{background:var(--hover)}
 <div id="statsByModel"></div>
 </div>
 <div class="card">
-<div class="card-title">最近请求日志</div>
+<div class="card-title">最近请求日志 <button class="btn btn-sm btn-danger" style="float:right" onclick="clearLogs()">清空日志</button></div>
 <div id="recentLogs"></div>
+<div id="logPagination" style="display:flex;align-items:center;justify-content:center;gap:8px;margin-top:12px"></div>
 </div>
 </div>
 
@@ -246,13 +247,13 @@ tr:hover{background:var(--hover)}
 <h4>OpenAI 格式 (Trae / WorkBuddy)</h4>
 <div class="config-line">Base URL: <span id="cfgOpenAIUrl">http://127.0.0.1:3458/v1</span> <button class="copy-btn" onclick="copyText(document.getElementById('cfgOpenAIUrl').textContent,this)">复制</button></div>
 <div class="config-line">API Key: <span id="cfgOpenAIKey">在 API Keys 页面生成</span></div>
-<div class="config-line">Model: <span id="cfgModel">gpt-4o-mini</span></div>
+<div class="config-line">Model: <span id="cfgModel">all</span> <button class="copy-btn" onclick="copyText(document.getElementById('cfgModel').textContent,this)">复制</button></div>
 </div>
 <div class="config-box">
 <h4>Anthropic 格式 (Claude Code / Cline)</h4>
 <div class="config-line">Base URL: <span id="cfgAnthropicUrl">http://127.0.0.1:3458</span> <button class="copy-btn" onclick="copyText(document.getElementById('cfgAnthropicUrl').textContent,this)">复制</button></div>
 <div class="config-line">API Key: <span id="cfgAnthropicKey">在 API Keys 页面生成</span></div>
-<div class="config-line">Model: <span id="cfgModel2">gpt-4o-mini</span></div>
+<div class="config-line">Model: <span id="cfgModel2">all</span> <button class="copy-btn" onclick="copyText(document.getElementById('cfgModel2').textContent,this)">复制</button></div>
 </div>
 <div class="config-box">
 <h4>指定站点调用 (URL 路径)</h4>
@@ -1344,17 +1345,43 @@ toast('已复制到剪贴板','success');
 }
 
 // --- Stats ---
-async function loadStats(){
-const [sRes,lRes]=await Promise.all([fetch(API+'/stats'),fetch(API+'/logs')]);
-const stats=await sRes.json();
-const logs=await lRes.json();
+let statsCurrentPage=1;
+const statsPageSize=30;
 
+async function loadStats(){
+const sRes=await fetch(API+'/stats');
+const stats=await sRes.json();
+await loadStatsLogs(statsCurrentPage);
+renderStatsOverview(stats);
+renderStatsByProvider(stats);
+renderStatsByModel(stats);
+}
+
+async function loadStatsLogs(page){
+statsCurrentPage=page;
+const lRes=await fetch(API+'/logs?page='+page+'&pageSize='+statsPageSize);
+const data=await lRes.json();
+const logs=data.logs||[];
+let lg='<table><tr><th>时间</th><th>站点</th><th>模型</th><th>格式</th><th>输入</th><th>输出</th></tr>';
+for(const l of logs){
+lg+='<tr><td>'+fmtDate(l.timestamp)+'</td><td>'+esc(l.providerName)+'</td><td class="mono">'+esc(l.model)+'</td><td>'+l.clientFormat+'</td><td>'+l.inputTokens+'</td><td>'+l.outputTokens+'</td></tr>';
+}
+if(logs.length===0)lg+='<tr><td colspan="6" class="empty">暂无日志</td></tr>';
+lg+='</table>';
+document.getElementById('recentLogs').innerHTML=lg;
+// 分页
+renderLogPagination(data.page||1,data.pages||0,data.total||0);
+}
+
+function renderStatsOverview(stats){
 document.getElementById('statsGrid').innerHTML=
 statCard(stats.totalReqs||0,'总请求数')+
 statCard((stats.totalInput||0).toLocaleString(),'输入 Token')+
 statCard((stats.totalOutput||0).toLocaleString(),'输出 Token')+
 statCard((stats.totalTokens||0).toLocaleString(),'Token 总量');
+}
 
+function renderStatsByProvider(stats){
 let bp='<table><tr><th>站点</th><th>请求数</th><th>输入Token</th><th>输出Token</th><th>总量</th></tr>';
 const providers=stats.byProvider||{};
 for(const[name,v]of Object.entries(providers)){
@@ -1363,7 +1390,9 @@ bp+='<tr><td>'+esc(name)+'</td><td>'+v.count+'</td><td>'+v.input+'</td><td>'+v.o
 if(Object.keys(providers).length===0)bp+='<tr><td colspan="5" class="empty">暂无数据</td></tr>';
 bp+='</table>';
 document.getElementById('statsByProvider').innerHTML=bp;
+}
 
+function renderStatsByModel(stats){
 let bm='<table><tr><th>模型</th><th>请求数</th><th>输入Token</th><th>输出Token</th><th>总量</th></tr>';
 const models=stats.byModel||{};
 for(const[name,v]of Object.entries(models)){
@@ -1372,14 +1401,28 @@ bm+='<tr><td class="mono">'+esc(name)+'</td><td>'+v.count+'</td><td>'+v.input+'<
 if(Object.keys(models).length===0)bm+='<tr><td colspan="5" class="empty">暂无数据</td></tr>';
 bm+='</table>';
 document.getElementById('statsByModel').innerHTML=bm;
-
-let lg='<table><tr><th>时间</th><th>站点</th><th>模型</th><th>格式</th><th>输入</th><th>输出</th></tr>';
-for(const l of (logs||[]).slice(0,50)){
-lg+='<tr><td>'+fmtDate(l.timestamp)+'</td><td>'+esc(l.providerName)+'</td><td class="mono">'+esc(l.model)+'</td><td>'+l.clientFormat+'</td><td>'+l.inputTokens+'</td><td>'+l.outputTokens+'</td></tr>';
 }
-if(!logs||logs.length===0)lg+='<tr><td colspan="6" class="empty">暂无日志</td></tr>';
-lg+='</table>';
-document.getElementById('recentLogs').innerHTML=lg;
+
+function renderLogPagination(page,pages,total){
+const el=document.getElementById('logPagination');
+if(pages<=1){el.innerHTML='<span style="color:var(--muted);font-size:12px">共 '+total+' 条</span>';return;}
+let html='';
+html+='<button class="btn btn-sm btn-outline" '+(page<=1?'disabled':'')+' onclick="loadStatsLogs('+(page-1)+')">上一页</button>';
+html+='<span style="font-size:13px">第 '+page+'/'+pages+' 页 (共'+total+'条)</span>';
+html+='<button class="btn btn-sm btn-outline" '+(page>=pages?'disabled':'')+' onclick="loadStatsLogs('+(page+1)+')">下一页</button>';
+el.innerHTML=html;
+}
+
+async function clearLogs(){
+if(!confirm('确定清空所有请求日志？此操作不可恢复。'))return;
+const res=await fetch(API+'/logs/clear',{method:'POST'});
+if(res.ok){
+toast('已清空','success');
+statsCurrentPage=1;
+loadStats();
+}else{
+toast('清空失败','error');
+}
 }
 
 function statCard(val,label){

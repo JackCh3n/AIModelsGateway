@@ -82,5 +82,5 @@ type Config struct {
 	APIKeys   []APIKey     `json:"apiKeys"`
 	Aliases   []ModelAlias `json:"aliases"`
 	Settings  Settings     `json:"settings"`
-	UsageLogs []UsageLog   `json:"usageLogs"`
+	UsageLogs []UsageLog   `json:"usageLogs,omitempty"` // 已迁移到SQLite，保留字段向后兼容
 }

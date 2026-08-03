@@ -97,6 +97,18 @@ func loadConfig() *Config {
 			}}
 		}
 	}
+	// 迁移旧的 JSON UsageLogs 到 SQLite
+	if len(cfg.UsageLogs) > 0 {
+		initDB()
+		if db != nil {
+			log.Printf("[migrate] 迁移 %d 条日志到 SQLite", len(cfg.UsageLogs))
+			for _, l := range cfg.UsageLogs {
+				dbAddUsageLog(l)
+			}
+			cfg.UsageLogs = nil
+			saveConfig()
+		}
+	}
 	config = &cfg
 	return config
 }
@@ -451,9 +463,10 @@ func getAliasByModel(model string) *ModelAlias {
 // --- Usage ---
 
 func addUsageLog(logEntry UsageLog) {
+	// 写入 SQLite
+	dbAddUsageLog(logEntry)
+	// 更新 provider 统计（仍用 config）
 	cfg := loadConfig()
-	cfg.UsageLogs = append(cfg.UsageLogs, logEntry)
-	// 更新 provider 统计
 	for i := range cfg.Providers {
 		if cfg.Providers[i].ID == logEntry.ProviderID {
 			cfg.Providers[i].UsageCount++
@@ -461,84 +474,19 @@ func addUsageLog(logEntry UsageLog) {
 			break
 		}
 	}
-	// 保留最近 10000 条日志
-	if len(cfg.UsageLogs) > 10000 {
-		cfg.UsageLogs = cfg.UsageLogs[len(cfg.UsageLogs)-10000:]
-	}
 	saveConfig()
 }
 
 func getUsageStats() map[string]any {
-	cfg := loadConfig()
-	// 按站点统计
-	byProvider := map[string]map[string]int64{}
-	// 按模型统计
-	byModel := map[string]map[string]int64{}
-	// 按日期统计
-	byDate := map[string]map[string]int64{}
-
-	totalInput := 0
-	totalOutput := 0
-	totalAll := 0
-
-	for _, log := range cfg.UsageLogs {
-		totalInput += log.InputTokens
-		totalOutput += log.OutputTokens
-		totalAll += log.TotalTokens
-
-		date := log.Timestamp.Format("2006-01-02")
-
-		if byProvider[log.ProviderName] == nil {
-			byProvider[log.ProviderName] = map[string]int64{"input": 0, "output": 0, "total": 0, "count": 0}
-		}
-		byProvider[log.ProviderName]["input"] += int64(log.InputTokens)
-		byProvider[log.ProviderName]["output"] += int64(log.OutputTokens)
-		byProvider[log.ProviderName]["total"] += int64(log.TotalTokens)
-		byProvider[log.ProviderName]["count"]++
-
-		if byModel[log.Model] == nil {
-			byModel[log.Model] = map[string]int64{"input": 0, "output": 0, "total": 0, "count": 0}
-		}
-		byModel[log.Model]["input"] += int64(log.InputTokens)
-		byModel[log.Model]["output"] += int64(log.OutputTokens)
-		byModel[log.Model]["total"] += int64(log.TotalTokens)
-		byModel[log.Model]["count"]++
-
-		if byDate[date] == nil {
-			byDate[date] = map[string]int64{"input": 0, "output": 0, "total": 0, "count": 0}
-		}
-		byDate[date]["input"] += int64(log.InputTokens)
-		byDate[date]["output"] += int64(log.OutputTokens)
-		byDate[date]["total"] += int64(log.TotalTokens)
-		byDate[date]["count"]++
-	}
-
-	return map[string]any{
-		"totalInput":  totalInput,
-		"totalOutput": totalOutput,
-		"totalTokens": totalAll,
-		"totalReqs":   len(cfg.UsageLogs),
-		"byProvider":  byProvider,
-		"byModel":     byModel,
-		"byDate":      byDate,
-	}
+	return dbGetUsageStats()
 }
 
-func getRecentLogs(limit int) []UsageLog {
-	cfg := loadConfig()
-	if limit <= 0 || limit > len(cfg.UsageLogs) {
-		limit = len(cfg.UsageLogs)
-	}
-	start := len(cfg.UsageLogs) - limit
-	if start < 0 {
-		start = 0
-	}
-	// 反序返回（最新在前）
-	result := make([]UsageLog, 0, limit)
-	for i := len(cfg.UsageLogs) - 1; i >= start; i-- {
-		result = append(result, cfg.UsageLogs[i])
-	}
-	return result
+func getRecentLogs(page, pageSize int) ([]UsageLog, int) {
+	return dbGetRecentLogs(page, pageSize)
+}
+
+func clearLogs() {
+	dbClearLogs()
 }
 
 // --- Settings ---
