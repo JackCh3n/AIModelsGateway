@@ -60,7 +60,7 @@ func dbAddUsageLog(entry UsageLog) {
 	if db == nil {
 		return
 	}
-	_, err := db.Exec("INSERT INTO usage_logs(id,provider_id,provider_name,model,input_tokens,output_tokens,total_tokens,client_format,timestamp) VALUES(?,?,?,?,?,?,?,?,?)",
+	_, err := db.Exec("INSERT OR IGNORE INTO usage_logs(id,provider_id,provider_name,model,input_tokens,output_tokens,total_tokens,client_format,timestamp) VALUES(?,?,?,?,?,?,?,?,?)",
 		entry.ID, entry.ProviderID, entry.ProviderName, entry.Model,
 		entry.InputTokens, entry.OutputTokens, entry.TotalTokens, entry.ClientFormat, entry.Timestamp,
 	)

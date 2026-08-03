@@ -99,6 +99,7 @@ func loadConfig() *Config {
 		}
 	}
 	// 迁移旧的 JSON UsageLogs 到 SQLite
+	migrated := false
 	if len(cfg.UsageLogs) > 0 {
 		initDB()
 		if db != nil {
@@ -107,10 +108,14 @@ func loadConfig() *Config {
 				dbAddUsageLog(l)
 			}
 			cfg.UsageLogs = nil
-			saveConfig()
+			migrated = true
 		}
 	}
 	config = &cfg
+	// 异步保存迁移结果，避免在 loadConfig 持锁时调用 saveConfig 导致死锁
+	if migrated {
+		go saveConfig()
+	}
 	return config
 }
 
