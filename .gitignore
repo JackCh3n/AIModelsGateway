@@ -1,0 +1,19 @@
+# Binary
+*.exe
+*.exe~
+aimodels
+aimodels.exe
+
+# Data
+data/
+*.json.bak
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db

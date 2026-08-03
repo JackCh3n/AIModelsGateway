@@ -1,0 +1,53 @@
+package main
+
+import "time"
+
+// Provider 中转站/官方站配置
+type Provider struct {
+	ID            string    `json:"id"`
+	Name          string    `json:"name"`
+	BaseURL       string    `json:"baseUrl"`  // e.g. https://api.openai.com/v1
+	APIKey        string    `json:"apiKey"`   // 该站点的 API Key
+	Format        string    `json:"format"`   // "openai" 或 "anthropic"
+	Models        []string  `json:"models"`   // 支持的模型列表
+	Status        string    `json:"status"`   // active, disabled
+	UsageCount    int64     `json:"usageCount"`
+	TotalTokens   int64     `json:"totalTokens"`
+	CreatedAt     time.Time `json:"createdAt"`
+}
+
+// APIKey 网关访问密钥
+type APIKey struct {
+	ID        string    `json:"id"`
+	Key       string    `json:"key"`
+	Name      string    `json:"name"`
+	CreatedAt time.Time `json:"createdAt"`
+	Status    string    `json:"status"` // active, disabled
+}
+
+// UsageLog Token 用量记录
+type UsageLog struct {
+	ID            string    `json:"id"`
+	ProviderID    string    `json:"providerId"`
+	ProviderName  string    `json:"providerName"`
+	Model         string    `json:"model"`
+	InputTokens   int       `json:"inputTokens"`
+	OutputTokens  int       `json:"outputTokens"`
+	TotalTokens   int       `json:"totalTokens"`
+	Timestamp     time.Time `json:"timestamp"`
+	ClientFormat  string    `json:"clientFormat"` // openai 或 anthropic
+}
+
+// Settings 全局设置
+type Settings struct {
+	ActiveProviderID string `json:"activeProviderId"`
+	DefaultModel     string `json:"defaultModel"`
+}
+
+// Config 持久化配置
+type Config struct {
+	Providers []Provider `json:"providers"`
+	APIKeys   []APIKey   `json:"apiKeys"`
+	Settings  Settings   `json:"settings"`
+	UsageLogs []UsageLog `json:"usageLogs"`
+}
