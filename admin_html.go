@@ -78,9 +78,9 @@ tr:hover{background:var(--hover)}
 @keyframes slideInRight{from{transform:translateX(120%);opacity:0}to{transform:translateX(0);opacity:1}}
 .empty{text-align:center;padding:40px;color:var(--muted)}
 .mono{font-family:'Courier New',monospace;font-size:13px}
-.test-result{margin-top:12px;padding:12px;border-radius:var(--radius);font-size:13px;overflow-x:auto;word-break:break-word;overflow-wrap:anywhere}
-.test-success{background:rgba(16,185,129,.08);border:1px solid rgba(16,185,129,.25)}
-.test-error{background:rgba(239,68,68,.08);border:1px solid rgba(239,68,68,.25)}
+.test-result{margin-top:12px;padding:12px;border-radius:var(--radius);font-size:13px;max-width:100%;overflow-x:hidden}
+.test-success{background:rgba(16,185,129,.08);border:1px solid rgba(16,185,129,.25);word-break:break-word;overflow-wrap:anywhere}
+.test-error{background:rgba(239,68,68,.08);border:1px solid rgba(239,68,68,.25);word-break:break-word;overflow-wrap:anywhere}
 .loading{display:inline-block;width:14px;height:14px;border:2px solid var(--border);border-top-color:var(--accent);border-radius:50%;animation:spin .6s linear infinite}
 @keyframes spin{to{transform:rotate(360deg)}}
 .config-box{background:var(--bg);border:1px solid var(--border);border-radius:var(--radius);padding:16px;margin-top:16px}
@@ -757,7 +757,7 @@ html+='<div class="test-error" style="margin-bottom:8px"><strong>Key 不可用</
 html+='<div class="test-error" style="padding:12px;margin-bottom:8px">'+esc(data.error||'未知错误')+'</div>';
 }
 if(data.raw){
-html+='<details style="margin-top:8px"><summary style="cursor:pointer;font-size:12px;color:var(--muted)">原始响应</summary><pre class="mono" style="font-size:11px;padding:8px;background:var(--bg);border-radius:4px;overflow-x:auto;margin-top:4px;white-space:pre-wrap">'+esc(data.raw)+'</pre></details>';
+html+='<details style="margin-top:8px"><summary style="cursor:pointer;font-size:12px;color:var(--muted)">原始响应</summary><pre class="mono" style="font-size:11px;padding:8px;background:var(--bg);border-radius:4px;overflow-x:hidden;white-space:pre-wrap;word-break:break-word;overflow-wrap:anywhere;margin-top:4px">'+esc(data.raw)+'</pre></details>';
 }
 content.innerHTML=html;
 }catch(e){
@@ -1161,7 +1161,7 @@ html+='<div class="test-error" style="margin-bottom:8px"><strong>测试失败</s
 html+='<div class="test-error" style="padding:12px;margin-bottom:8px">'+esc(data.error||'未知错误')+'</div>';
 }
 if(data.raw){
-html+='<details style="margin-top:8px"><summary style="cursor:pointer;font-size:12px;color:var(--muted)">原始响应</summary><pre class="mono" style="font-size:11px;padding:8px;background:var(--bg);border-radius:4px;overflow-x:auto;margin-top:4px;white-space:pre-wrap">'+esc(data.raw)+'</pre></details>';
+html+='<details style="margin-top:8px"><summary style="cursor:pointer;font-size:12px;color:var(--muted)">原始响应</summary><pre class="mono" style="font-size:11px;padding:8px;background:var(--bg);border-radius:4px;overflow-x:hidden;white-space:pre-wrap;word-break:break-word;overflow-wrap:anywhere;margin-top:4px">'+esc(data.raw)+'</pre></details>';
 }
 content.innerHTML=html;
 }catch(e){
