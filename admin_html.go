@@ -146,9 +146,10 @@ tr:hover{background:var(--hover)}
 <!-- 中转站管理 -->
 <div class="panel active" id="panel-providers">
 <div class="card">
-<div class="card-title">中转站列表 <div style="display:flex;gap:8px"><button class="btn btn-outline" onclick="importProvider()">导入配置</button><button class="btn btn-primary" onclick="showProviderModal()">+ 添加中转站</button></div></div>
+<div class="card-title">中转站列表 <div style="display:flex;gap:8px"><button class="btn btn-outline" onclick="importProvider()">导入配置</button><button class="btn btn-outline" onclick="importOpenCode()">导入OpenCode</button><button class="btn btn-primary" onclick="showProviderModal()">+ 添加中转站</button></div></div>
 <div id="providerList"></div>
 <input type="file" id="importFile" accept=".json" style="display:none" onchange="handleImportFile(event)">
+<input type="file" id="importOpenCodeFile" accept=".json" style="display:none" onchange="handleImportOpenCodeFile(event)">
 </div>
 </div>
 
@@ -1177,6 +1178,34 @@ toast('正在下载配置文件','success');
 
 function importProvider(){
 document.getElementById('importFile').click();
+}
+
+function importOpenCode(){
+document.getElementById('importOpenCodeFile').click();
+}
+
+async function handleImportOpenCodeFile(event){
+const file=event.target.files[0];
+if(!file)return;
+const text=await file.text();
+let parsed;
+try{
+parsed=JSON.parse(text);
+}catch(e){
+toast('文件格式错误: '+e.message,'error');
+event.target.value='';
+return;
+}
+const res=await fetch(API+'/providers/import/opencode',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(parsed)});
+if(res.ok){
+const p=await res.json();
+toast('导入成功: '+(p.name||'')+' ('+(p.models||[]).length+' 个模型)','success');
+loadProviders();
+}else{
+const err=await res.json().catch(()=>({}));
+toast('导入失败: '+(err.error||''),'error');
+}
+event.target.value='';
 }
 
 async function handleImportFile(event){

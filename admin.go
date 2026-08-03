@@ -448,6 +448,127 @@ func registerAdminRoutes(mux *http.ServeMux) {
 		addProvider(p)
 		writeJSON(w, http.StatusOK, p)
 	}))
+
+	// 导入 OpenCode 配置: POST /admin/api/providers/import/opencode
+	mux.HandleFunc("/admin/api/providers/import/opencode", corsHandler(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != "POST" {
+			writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "POST required"})
+			return
+		}
+		p, err := parseOpenCodeConfig(r.Body)
+		if err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		addProvider(*p)
+		writeJSON(w, http.StatusOK, p)
+	}))
+}
+
+// parseOpenCodeConfig 解析 OpenCode 格式配置并生成 Provider
+func parseOpenCodeConfig(rd io.Reader) (*Provider, error) {
+	var raw map[string]any
+	if err := json.NewDecoder(rd).Decode(&raw); err != nil {
+		return nil, fmt.Errorf("JSON解析失败: %v", err)
+	}
+	prov, ok := raw["provider"].(map[string]any)
+	if !ok {
+		return nil, fmt.Errorf("缺少 provider 字段")
+	}
+	// 支持 openai / anthropic
+	var format, baseURL, apiKey string
+	var modelsMap map[string]any
+	if openai, ok := prov["openai"].(map[string]any); ok {
+		format = "openai"
+		if opts, ok := openai["options"].(map[string]any); ok {
+			baseURL, _ = opts["baseURL"].(string)
+			apiKey, _ = opts["apiKey"].(string)
+		}
+		modelsMap, _ = openai["models"].(map[string]any)
+	} else if anthropic, ok := prov["anthropic"].(map[string]any); ok {
+		format = "anthropic"
+		if opts, ok := anthropic["options"].(map[string]any); ok {
+			baseURL, _ = opts["baseURL"].(string)
+			apiKey, _ = opts["apiKey"].(string)
+		}
+		modelsMap, _ = anthropic["models"].(map[string]any)
+	} else {
+		return nil, fmt.Errorf("provider 下未找到 openai 或 anthropic 配置")
+	}
+	// 清理 baseURL 反引号
+	baseURL = strings.Trim(baseURL, "`")
+	// 提取模型 + 上下文配置
+	models := []string{}
+	modelConfigs := []ModelConfig{}
+	for name, mraw := range modelsMap {
+		models = append(models, name)
+		m, _ := mraw.(map[string]any)
+		limit, _ := m["limit"].(map[string]any)
+		inputLimit := tokenToPreset(int64(toInt(limit["context"])))
+		outputLimit := tokenToPreset(int64(toInt(limit["output"])))
+		mc := ModelConfig{Model: name}
+		if inputLimit != "" {
+			mc.InputLimit = inputLimit
+		}
+		if outputLimit != "" {
+			mc.OutputLimit = outputLimit
+		}
+		if mc.InputLimit != "" || mc.OutputLimit != "" {
+			modelConfigs = append(modelConfigs, mc)
+		}
+	}
+	if baseURL == "" {
+		return nil, fmt.Errorf("缺少 baseURL")
+	}
+	name := hostnameOf(baseURL)
+	p := Provider{
+		ID:             generateID("prov"),
+		Name:           name,
+		BaseURL:        baseURL,
+		APIKey:         apiKey,
+		APIKeys: []ProviderKey{{ID: generateID("pk"), Key: apiKey, Name: "导入", Status: "active"}},
+		Format:         format,
+		Models:         models,
+		DisabledModels: []string{},
+		ModelConfigs:   modelConfigs,
+		Status:         "active",
+	}
+	return &p, nil
+}
+
+// toInt 安全转 int
+func toInt(v any) int {
+	switch n := v.(type) {
+	case float64:
+		return int(n)
+	case int:
+		return n
+	}
+	return 0
+}
+
+// tokenToPreset token 数转预算预设标签
+func tokenToPreset(n int64) string {
+	if n <= 0 {
+		return ""
+	}
+	k := n / 1000
+	if k >= 1000 {
+		return fmt.Sprintf("%dM", k/1000)
+	}
+	return fmt.Sprintf("%dK", k)
+}
+
+// hostnameOf 从 URL 提取站点名
+func hostnameOf(url string) string {
+	u := strings.TrimPrefix(url, "https://")
+	u = strings.TrimPrefix(u, "http://")
+	u = strings.TrimSuffix(u, "/v1")
+	u = strings.TrimSuffix(u, "/")
+	if idx := strings.Index(u, "/"); idx > 0 {
+		u = u[:idx]
+	}
+	return u
 }
 
 // testProvider 测试中转站 key 和模型可用性（真实对话测试）
