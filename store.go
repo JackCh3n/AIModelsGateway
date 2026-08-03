@@ -37,7 +37,7 @@ func loadConfig() *Config {
 	config = &Config{
 		Providers: []Provider{},
 		APIKeys:   []APIKey{},
-		Settings:  Settings{DefaultModel: "gpt-4o-mini"},
+		Settings:  Settings{DefaultModel: "all"},
 		UsageLogs: []UsageLog{},
 	}
 
@@ -65,7 +65,7 @@ func loadConfig() *Config {
 		cfg.UsageLogs = []UsageLog{}
 	}
 	if cfg.Settings.DefaultModel == "" {
-		cfg.Settings.DefaultModel = "gpt-4o-mini"
+		cfg.Settings.DefaultModel = "all"
 	}
 	if len(cfg.Settings.InputPresets) == 0 {
 		cfg.Settings.InputPresets = []string{"32K", "64K", "128K", "256K", "384K", "512K", "1M"}
@@ -200,17 +200,6 @@ func setActiveProvider(id string) bool {
 	for i := range cfg.Providers {
 		if cfg.Providers[i].ID == id {
 			cfg.Settings.ActiveProviderID = id
-			// 自动设置默认模型为该站点的第一个已启用模型
-			disabledSet := map[string]bool{}
-			for _, dm := range cfg.Providers[i].DisabledModels {
-				disabledSet[dm] = true
-			}
-			for _, m := range cfg.Providers[i].Models {
-				if !disabledSet[m] {
-					cfg.Settings.DefaultModel = m
-					break
-				}
-			}
 			saveConfig()
 			return true
 		}

@@ -195,7 +195,7 @@ tr:hover{background:var(--hover)}
 <div class="card-title">全局设置</div>
 <div class="form-group">
 <label>默认模型</label>
-<input class="input" id="settingDefaultModel" placeholder="gpt-4o-mini">
+<input class="input" id="settingDefaultModel" placeholder="all">
 </div>
 <div class="form-row">
 <div class="form-group">
@@ -785,14 +785,14 @@ const enabledCount=(p.models||[]).filter(m=>!disabledSet.has(m)).length;
 const totalCount=(p.models||[]).length;
 const activeKeyCount=(p.apiKeys||[]).filter(k=>k.status==='active').length;
 const totalKeyCount=(p.apiKeys||[]).length;
-html+='<tr>';
+html+='<tr onclick="toggleModels(\''+p.id+'\')" style="cursor:pointer">';
 html+='<td>'+esc(p.name)+(isActive?' <span class="badge badge-current">当前</span>':'')+'</td>';
 html+='<td><span class="badge badge-'+p.format+'">'+p.format+'</span></td>';
 html+='<td class="mono">'+esc(p.baseUrl)+'</td>';
-html+='<td>'+enabledCount+'/'+totalCount+' <button class="expand-btn" onclick="toggleModels(\''+p.id+'\')">展开</button></td>';
+html+='<td>'+enabledCount+'/'+totalCount+'</td>';
 html+='<td>'+activeKeyCount+'/'+totalKeyCount+' keys</td>';
 html+='<td><span class="badge badge-'+p.status+'">'+p.status+'</span></td>';
-html+='<td style="white-space:nowrap">';
+html+='<td style="white-space:nowrap" onclick="event.stopPropagation()">';
 if(!isActive&&p.status==='active')html+='<button class="btn btn-sm btn-success" onclick="setActive(\''+p.id+'\')">启用</button> ';
 html+='<button class="btn btn-sm btn-outline" onclick="editProvider(\''+p.id+'\')">编辑</button> ';
 html+='<button class="btn btn-sm btn-outline" onclick="exportProvider(\''+p.id+'\')">导出</button> ';
@@ -800,7 +800,7 @@ html+='<button class="btn btn-sm btn-danger" onclick="deleteProvider(\''+p.id+'\
 html+='</td>';
 html+='</tr>';
 // 模型展开行
-html+='<tr id="models-'+p.id+'" style="display:none"><td colspan="7"><div class="model-row">';
+html+='<tr id="models-'+p.id+'" style="display:none" onclick="event.stopPropagation()"><td colspan="7"><div class="model-row">';
 for(const m of (p.models||[])){
 const enabled=!disabledSet.has(m);
 const isDefault=(m===defaultModel);
@@ -1200,6 +1200,7 @@ el.innerHTML='<div class="empty">未启用任何站点，请在中转站列表�
 return;
 }
 const base=location.protocol+'//'+location.host;
+const baseUrl=base+'/v1';
 const openaiUrl=base+'/v1/chat/completions';
 const anthropicUrl=base+'/v1/messages';
 const providerUrl=base+'/v1/chat/completions/p/'+activeProvider.id;
@@ -1208,6 +1209,7 @@ html+='<tr><td style="width:120px;color:var(--muted)">启用站点</td><td><stro
 html+='<tr><td style="color:var(--muted)">默认模型</td><td class="mono">'+esc(settings.defaultModel||'-')+'</td></tr>';
 html+='<tr><td style="color:var(--muted)">站点地址</td><td class="mono" style="font-size:12px">'+esc(activeProvider.baseUrl)+'</td></tr>';
 html+='<tr><td style="color:var(--muted)">已启用模型</td><td style="font-size:12px">'+activeProvider.models.filter(m=>!(activeProvider.disabledModels||[]).includes(m)).length+' 个</td></tr>';
+html+='<tr><td style="color:var(--muted)">Base URL</td><td><div class="url-with-copy"><span class="mono" style="font-size:11px">'+baseUrl+'</span> <button class="copy-btn" onclick="copyText(\''+baseUrl+'\',this)">复制</button></div></td></tr>';
 html+='<tr><td style="color:var(--muted)">OpenAI 调用</td><td><div class="url-with-copy"><span class="mono" style="font-size:11px">'+openaiUrl+'</span> <button class="copy-btn" onclick="copyText(\''+openaiUrl+'\',this)">复制</button></div></td></tr>';
 html+='<tr><td style="color:var(--muted)">Anthropic 调用</td><td><div class="url-with-copy"><span class="mono" style="font-size:11px">'+anthropicUrl+'</span> <button class="copy-btn" onclick="copyText(\''+anthropicUrl+'\',this)">复制</button></div></td></tr>';
 html+='<tr><td style="color:var(--muted)">指定站点调用</td><td><div class="url-with-copy"><span class="mono" style="font-size:11px">'+providerUrl+'</span> <button class="copy-btn" onclick="copyText(\''+providerUrl+'\',this)">复制</button></div></td></tr>';
@@ -1387,7 +1389,7 @@ return '<div class="stat-card"><div class="stat-value">'+val+'</div><div class="
 async function loadSettings(){
 const res=await fetch(API+'/settings');
 const data=await res.json();
-document.getElementById('settingDefaultModel').value=data.defaultModel||'gpt-4o-mini';
+document.getElementById('settingDefaultModel').value=data.defaultModel||'all';
 activeProviderId=data.activeProviderId||'';
 if(data.inputPresets&&data.inputPresets.length)inputPresets=data.inputPresets;
 if(data.outputPresets&&data.outputPresets.length)outputPresets=data.outputPresets;
