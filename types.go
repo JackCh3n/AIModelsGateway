@@ -15,6 +15,8 @@ type Provider struct {
 	DefaultModel   string            `json:"defaultModel"`   // 站点默认模型（model=all时使用）
 	ModelConfigs   []ModelConfig     `json:"modelConfigs"`   // 每个模型的上下文配置
 	CustomHeaders  map[string]string `json:"customHeaders"`  // 自定义请求头
+	CheckinURL     string            `json:"checkinUrl"`     // 打卡签到地址
+	LastCheckin    time.Time         `json:"lastCheckin"`    // 上次打卡时间
 	Status         string            `json:"status"`         // active, disabled
 	UsageCount     int64             `json:"usageCount"`
 	TotalTokens    int64             `json:"totalTokens"`

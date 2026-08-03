@@ -298,6 +298,10 @@ tr:hover{background:var(--hover)}
 <input class="input" id="provBaseUrl" placeholder="https://api.openai.com/v1" oninput="this.value=this.value.trim()">
 </div>
 <div class="form-group">
+<label>打卡签到地址 (可选，支持签到送积分的站点)</label>
+<input class="input" id="provCheckinUrl" placeholder="https://api.xxx.com/user/checkin" oninput="this.value=this.value.trim()">
+</div>
+<div class="form-group">
 <label>API Keys (多Key轮询)</label>
 <div id="provKeysList" style="margin-bottom:8px"></div>
 <div style="display:flex;gap:8px">
@@ -794,6 +798,10 @@ html+='<td>'+activeKeyCount+'/'+totalKeyCount+' keys</td>';
 html+='<td><span class="badge badge-'+p.status+'">'+p.status+'</span></td>';
 html+='<td style="white-space:nowrap" onclick="event.stopPropagation()">';
 if(!isActive&&p.status==='active')html+='<button class="btn btn-sm btn-success" onclick="setActive(\''+p.id+'\')">启用</button> ';
+if(p.checkinUrl){
+const last=p.lastCheckin?fmtCheckin(p.lastCheckin):'';
+html+='<button class="btn btn-sm btn-outline" onclick="doCheckin(\''+p.id+'\',this)" data-pid="'+p.id+'">'+(last?'已打卡 '+last:'打卡')+'</button> ';
+}
 html+='<button class="btn btn-sm btn-outline" onclick="editProvider(\''+p.id+'\')">编辑</button> ';
 html+='<button class="btn btn-sm btn-outline" onclick="exportProvider(\''+p.id+'\')">导出</button> ';
 html+='<button class="btn btn-sm btn-danger" onclick="deleteProvider(\''+p.id+'\')">删除</button>';
@@ -910,6 +918,7 @@ document.getElementById('provName').value='';
 document.getElementById('provFormat').value='openai';
 document.getElementById('provStatus').value='active';
 document.getElementById('provBaseUrl').value='';
+document.getElementById('provCheckinUrl').value='';
 document.getElementById('provKeyInput').value='';
 document.getElementById('provKeyName').value='';
 editingKeys=[];
@@ -931,6 +940,7 @@ document.getElementById('provName').value=p.name;
 document.getElementById('provFormat').value=p.format;
 document.getElementById('provStatus').value=p.status;
 document.getElementById('provBaseUrl').value=p.baseUrl;
+document.getElementById('provCheckinUrl').value=p.checkinUrl||'';
 // 加载多 Key
 editingKeys=(p.apiKeys||[]).map(k=>({...k}));
 renderKeyList();
@@ -955,6 +965,7 @@ name:document.getElementById('provName').value,
 format:document.getElementById('provFormat').value,
 status:document.getElementById('provStatus').value,
 baseUrl:document.getElementById('provBaseUrl').value,
+checkinUrl:document.getElementById('provCheckinUrl').value,
 apiKey:editingKeys.length>0?editingKeys[0].key:'',
 apiKeys:editingKeys.map(k=>({id:k.id||'',key:k.key,name:k.name||'',status:k.status||'active'})),
 models:[...editingModels],
@@ -967,7 +978,11 @@ toast('请填写名称和 Base URL','error');return;
 // 编辑时保留 disabledModels
 if(id){
 const old=allProvidersCache.find(x=>x.id===id);
-if(old)body.disabledModels=old.disabledModels||[];
+if(old){
+body.disabledModels=old.disabledModels||[];
+body.defaultModel=old.defaultModel||'';
+body.lastCheckin=old.lastCheckin||null;
+}
 }
 const method=id?'PUT':'POST';
 const url=id?API+'/providers/'+id:API+'/providers';
@@ -990,6 +1005,33 @@ if(res.ok){toast('已删除','success');loadProviders();}
 async function setActive(id){
 const res=await fetch(API+'/providers/active/'+id,{method:'PUT'});
 if(res.ok){toast('已设为当前站点','success');loadProviders();}
+}
+
+function fmtCheckin(ts){
+if(!ts)return'';
+const d=new Date(ts);
+const now=new Date();
+const m=(d.getMonth()+1).toString().padStart(2,'0');
+const day=d.getDate().toString().padStart(2,'0');
+const hh=d.getHours().toString().padStart(2,'0');
+const mm=d.getMinutes().toString().padStart(2,'0');
+return m+'-'+day+' '+hh+':'+mm;
+}
+
+async function doCheckin(id,btn){
+if(!btn)btn=document.querySelector('[data-pid="'+id+'"]');
+if(btn){btn.disabled=true;btn.innerHTML='<span class="loading"></span> 打卡中...';}
+const res=await fetch(API+'/providers/checkin/'+id,{method:'POST'});
+const data=await res.json();
+if(btn)btn.disabled=false;
+if(data.success){
+toast('打卡成功','success');
+if(btn)btn.innerHTML='已打卡 '+fmtCheckin(new Date().toISOString());
+loadProviders();
+}else{
+toast('打卡失败: '+(data.message||''),'error');
+if(btn)btn.innerHTML='打卡';
+}
 }
 
 async function testProvider(){

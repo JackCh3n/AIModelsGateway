@@ -160,6 +160,25 @@ func registerAdminRoutes(mux *http.ServeMux) {
 		})
 	}))
 
+	// 打卡签到: POST /admin/api/providers/{id}/checkin
+	mux.HandleFunc("/admin/api/providers/checkin/", corsHandler(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != "POST" {
+			writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "POST required"})
+			return
+		}
+		path := strings.TrimPrefix(r.URL.Path, "/admin/api/providers/checkin/")
+		parts := strings.SplitN(path, "/", 2)
+		if len(parts) < 1 || parts[0] == "" {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "provider id required"})
+			return
+		}
+		ok, msg := checkinProvider(parts[0])
+		writeJSON(w, http.StatusOK, map[string]any{
+			"success": ok,
+			"message": truncate(msg, 500),
+		})
+	}))
+
 	// 模型上下文配置: PUT /admin/api/providers/{id}/models/config?model=xxx
 	mux.HandleFunc("/admin/api/providers/models/config/", corsHandler(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != "PUT" {
