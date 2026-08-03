@@ -195,6 +195,18 @@ func deleteProvider(id string) bool {
 	return false
 }
 
+func setProviderDefaultModel(providerID, model string) bool {
+	cfg := loadConfig()
+	for i := range cfg.Providers {
+		if cfg.Providers[i].ID == providerID {
+			cfg.Providers[i].DefaultModel = model
+			saveConfig()
+			return true
+		}
+	}
+	return false
+}
+
 func setActiveProvider(id string) bool {
 	cfg := loadConfig()
 	for i := range cfg.Providers {

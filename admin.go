@@ -130,6 +130,35 @@ func registerAdminRoutes(mux *http.ServeMux) {
 		})
 	}))
 
+	// 设置站点默认模型: PUT /admin/api/providers/{id}/models/default?model=xxx
+	mux.HandleFunc("/admin/api/providers/models/default/", corsHandler(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != "PUT" {
+			writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "PUT required"})
+			return
+		}
+		path := strings.TrimPrefix(r.URL.Path, "/admin/api/providers/models/default/")
+		parts := strings.SplitN(path, "/", 2)
+		if len(parts) < 1 || parts[0] == "" {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "provider id required"})
+			return
+		}
+		providerID := parts[0]
+		model := r.URL.Query().Get("model")
+		if model == "" {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "model query param required"})
+			return
+		}
+		if !setProviderDefaultModel(providerID, model) {
+			writeJSON(w, http.StatusNotFound, map[string]string{"error": "provider not found"})
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{
+			"status":       "ok",
+			"providerId":   providerID,
+			"defaultModel": model,
+		})
+	}))
+
 	// 模型上下文配置: PUT /admin/api/providers/{id}/models/config?model=xxx
 	mux.HandleFunc("/admin/api/providers/models/config/", corsHandler(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != "PUT" {

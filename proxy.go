@@ -62,21 +62,10 @@ func proxyRequest(w http.ResponseWriter, r *http.Request, clientFormat string, p
 		return
 	}
 
-	// 模型为空或 "all" 时，自动选择该站点的第一个已启用模型
+	// 模型为空或 "all" 时，使用站点的默认模型
 	if model == "" || model == "all" {
-		picked := ""
-		disabledSet := map[string]bool{}
-		for _, dm := range provider.DisabledModels {
-			disabledSet[dm] = true
-		}
-		for _, m := range provider.Models {
-			if !disabledSet[m] {
-				picked = m
-				break
-			}
-		}
-		if picked != "" {
-			model = picked
+		if provider.DefaultModel != "" {
+			model = provider.DefaultModel
 			params["model"] = model
 			body, _ = json.Marshal(params)
 		}

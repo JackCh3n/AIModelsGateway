@@ -803,7 +803,7 @@ html+='</tr>';
 html+='<tr id="models-'+p.id+'" style="display:none" onclick="event.stopPropagation()"><td colspan="7"><div class="model-row">';
 for(const m of (p.models||[])){
 const enabled=!disabledSet.has(m);
-const isDefault=(m===defaultModel);
+const isDefault=(m===p.defaultModel);
 const modelUrl=getModelUrl(p,m);
 const mc=(p.modelConfigs||[]).find(c=>c.model===m);
 html+='<span class="model-chip'+(enabled?'':' disabled')+'">';
@@ -812,7 +812,7 @@ html+=esc(m);
 if(isDefault)html+=' <span class="badge badge-current">默认</span>';
 if(mc&&mc.outputLimit)html+=' <span class="badge badge-openai" title="输出限制">'+esc(mc.outputLimit)+'</span>';
 if(mc&&mc.inputLimit)html+=' <span class="badge badge-active" title="输入限制">'+esc(mc.inputLimit)+'</span>';
-html+=' <span class="url-hint" style="display:block">'+modelUrl+' <button class="copy-btn" onclick="copyText(\''+esc(modelUrl)+'\',this)">复制</button> <button class="copy-btn" onclick="testModel(\''+p.id+'\',\''+esc(m)+'\')">测试</button> <button class="copy-btn" onclick="showModelConfigModal(\''+p.id+'\',\''+esc(m)+'\')">配置</button>'+(isDefault?'':' <button class="copy-btn" onclick="setModelDefault(\''+esc(m)+'\')">设为默认</button>')+'</span>';
+html+=' <span class="url-hint" style="display:block">'+modelUrl+' <button class="copy-btn" onclick="copyText(\''+esc(modelUrl)+'\',this)">复制</button> <button class="copy-btn" onclick="testModel(\''+p.id+'\',\''+esc(m)+'\')">测试</button> <button class="copy-btn" onclick="showModelConfigModal(\''+p.id+'\',\''+esc(m)+'\')">配置</button>'+(isDefault?'':' <button class="copy-btn" onclick="setModelDefault(\''+p.id+'\',\''+esc(m)+'\')">设为默认</button>')+'</span>';
 html+='</span>';
 }
 if(!p.models||p.models.length===0)html+='<span class="empty" style="padding:8px">暂无模型</span>';
@@ -853,10 +853,11 @@ toast('操作失败','error');
 }
 }
 
-async function setModelDefault(model){
-const res=await fetch(API+'/settings',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({defaultModel:model,activeProviderId:activeProviderId})});
+async function setModelDefault(providerId,model){
+const url=API+'/providers/models/default/'+providerId+'?model='+encodeURIComponent(model);
+const res=await fetch(url,{method:'PUT'});
 if(res.ok){
-toast('已设为默认模型: '+model,'success');
+toast('已设为站点默认模型: '+model,'success');
 loadProviders();
 }else{
 toast('操作失败','error');
@@ -1206,7 +1207,7 @@ const anthropicUrl=base+'/v1/messages';
 const providerUrl=base+'/v1/chat/completions/p/'+activeProvider.id;
 let html='<table>';
 html+='<tr><td style="width:120px;color:var(--muted)">启用站点</td><td><strong>'+esc(activeProvider.name)+'</strong> <span class="badge badge-'+activeProvider.format+'">'+activeProvider.format+'</span></td></tr>';
-html+='<tr><td style="color:var(--muted)">默认模型</td><td class="mono">'+esc(settings.defaultModel||'-')+'</td></tr>';
+html+='<tr><td style="color:var(--muted)">默认模型</td><td class="mono">'+esc(activeProvider.defaultModel||'未设置')+'</td></tr>';
 html+='<tr><td style="color:var(--muted)">站点地址</td><td class="mono" style="font-size:12px">'+esc(activeProvider.baseUrl)+'</td></tr>';
 html+='<tr><td style="color:var(--muted)">已启用模型</td><td style="font-size:12px">'+activeProvider.models.filter(m=>!(activeProvider.disabledModels||[]).includes(m)).length+' 个</td></tr>';
 html+='<tr><td style="color:var(--muted)">Base URL</td><td><div class="url-with-copy"><span class="mono" style="font-size:11px">'+baseUrl+'</span> <button class="copy-btn" onclick="copyText(\''+baseUrl+'\',this)">复制</button></div></td></tr>';
