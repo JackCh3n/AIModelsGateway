@@ -200,6 +200,17 @@ func setActiveProvider(id string) bool {
 	for i := range cfg.Providers {
 		if cfg.Providers[i].ID == id {
 			cfg.Settings.ActiveProviderID = id
+			// 自动设置默认模型为该站点的第一个已启用模型
+			disabledSet := map[string]bool{}
+			for _, dm := range cfg.Providers[i].DisabledModels {
+				disabledSet[dm] = true
+			}
+			for _, m := range cfg.Providers[i].Models {
+				if !disabledSet[m] {
+					cfg.Settings.DefaultModel = m
+					break
+				}
+			}
 			saveConfig()
 			return true
 		}
