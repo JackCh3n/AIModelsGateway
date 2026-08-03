@@ -78,7 +78,7 @@ tr:hover{background:var(--hover)}
 @keyframes slideInRight{from{transform:translateX(120%);opacity:0}to{transform:translateX(0);opacity:1}}
 .empty{text-align:center;padding:40px;color:var(--muted)}
 .mono{font-family:'Courier New',monospace;font-size:13px}
-.test-result{margin-top:12px;padding:12px;border-radius:var(--radius);font-size:13px}
+.test-result{margin-top:12px;padding:12px;border-radius:var(--radius);font-size:13px;overflow-x:auto;word-break:break-word;overflow-wrap:anywhere}
 .test-success{background:rgba(16,185,129,.08);border:1px solid rgba(16,185,129,.25)}
 .test-error{background:rgba(239,68,68,.08);border:1px solid rgba(239,68,68,.25)}
 .loading{display:inline-block;width:14px;height:14px;border:2px solid var(--border);border-top-color:var(--accent);border-radius:50%;animation:spin .6s linear infinite}
@@ -94,10 +94,13 @@ tr:hover{background:var(--hover)}
 .tag .tag-x:hover{opacity:1}
 .tag-input{border:none;outline:none;background:transparent;color:var(--text);font-size:14px;font-family:inherit;flex:1;min-width:120px;padding:4px}
 /* 模型列表中的标签 */
-.model-chip{display:inline-flex;align-items:center;gap:6px;background:var(--tag-bg);color:var(--tag-text);padding:3px 8px;border-radius:4px;font-size:12px;font-family:'Courier New',monospace;margin:2px}
-.model-chip.disabled{opacity:.45;text-decoration:line-through}
-.model-chip .chip-toggle{cursor:pointer;border:none;background:none;color:inherit;font-size:12px;padding:0}
+.model-chip{display:flex;align-items:center;gap:6px;background:var(--tag-bg);color:var(--tag-text);padding:4px 8px;border-radius:4px;font-size:12px;font-family:'Courier New',monospace;margin:4px 0;border:1px solid var(--border)}
+.model-chip.disabled{opacity:.45}
+.model-chip .chip-toggle{cursor:pointer;border:none;background:none;color:inherit;font-size:12px;padding:0;flex-shrink:0}
 .model-chip .chip-toggle:hover{opacity:.8}
+.model-chip .chip-name{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.model-chip.disabled .chip-name{text-decoration:line-through}
+.model-chip .chip-actions{display:flex;align-items:center;gap:4px;flex-wrap:wrap;flex-shrink:1}
 .model-row{margin-top:8px}
 .url-hint{font-size:11px;color:var(--muted);font-family:'Courier New',monospace;margin-top:4px;word-break:break-all}
 .expand-btn{font-size:12px;color:var(--accent);cursor:pointer;background:none;border:none;padding:2px 6px}
@@ -194,10 +197,6 @@ tr:hover{background:var(--hover)}
 <div class="panel" id="panel-settings">
 <div class="card">
 <div class="card-title">全局设置</div>
-<div class="form-group">
-<label>默认模型</label>
-<input class="input" id="settingDefaultModel" placeholder="all">
-</div>
 <div class="form-row">
 <div class="form-group">
 <label>输入预算预设 (回车添加，或逗号分隔添加多个)</label>
@@ -807,14 +806,21 @@ const enabled=!disabledSet.has(m);
 const isDefault=(m===p.defaultModel);
 const modelUrl=getModelUrl(p,m);
 const mc=(p.modelConfigs||[]).find(c=>c.model===m);
-html+='<span class="model-chip'+(enabled?'':' disabled')+'">';
-html+='<button class="chip-toggle" onclick="toggleModel(\''+p.id+'\',\''+esc(m)+'\')" title="'+(enabled?'点击禁用':'点击启用')+'">'+(enabled?'✅':'⏸️')+'</button> ';
-html+=esc(m);
+html+='<div class="model-chip'+(enabled?'':' disabled')+'">';
+html+='<button class="chip-toggle" onclick="toggleModel(\''+p.id+'\',\''+esc(m)+'\')" title="'+(enabled?'点击禁用':'点击启用')+'">'+(enabled?'✅':'⏸️')+'</button>';
+html+='<span class="chip-name">'+esc(m);
 if(isDefault)html+=' <span class="badge badge-current">默认</span>';
 if(mc&&mc.outputLimit)html+=' <span class="badge badge-openai" title="输出限制">'+esc(mc.outputLimit)+'</span>';
 if(mc&&mc.inputLimit)html+=' <span class="badge badge-active" title="输入限制">'+esc(mc.inputLimit)+'</span>';
-html+=' <span class="url-hint" style="display:block">'+modelUrl+' <button class="copy-btn" onclick="copyText(\''+esc(modelUrl)+'\',this)">复制</button> <button class="copy-btn" onclick="testModel(\''+p.id+'\',\''+esc(m)+'\')">测试</button> <button class="copy-btn" onclick="showModelConfigModal(\''+p.id+'\',\''+esc(m)+'\')">配置</button>'+(isDefault?'':' <button class="copy-btn" onclick="setModelDefault(\''+p.id+'\',\''+esc(m)+'\')">设为默认</button>')+'</span>';
 html+='</span>';
+html+='<span class="chip-actions">';
+html+='<span class="url-hint">'+modelUrl+'</span>';
+html+='<button class="copy-btn" onclick="copyText(\''+esc(modelUrl)+'\',this)">复制</button>';
+html+='<button class="copy-btn" onclick="testModel(\''+p.id+'\',\''+esc(m)+'\')">测试</button>';
+html+='<button class="copy-btn" onclick="showModelConfigModal(\''+p.id+'\',\''+esc(m)+'\')">配置</button>';
+if(!isDefault)html+='<button class="copy-btn" onclick="setModelDefault(\''+p.id+'\',\''+esc(m)+'\')">设为默认</button>';
+html+='</span>';
+html+='</div>';
 }
 if(!p.models||p.models.length===0)html+='<span class="empty" style="padding:8px">暂无模型</span>';
 html+='</div></td></tr>';
@@ -1433,7 +1439,6 @@ return '<div class="stat-card"><div class="stat-value">'+val+'</div><div class="
 async function loadSettings(){
 const res=await fetch(API+'/settings');
 const data=await res.json();
-document.getElementById('settingDefaultModel').value=data.defaultModel||'all';
 activeProviderId=data.activeProviderId||'';
 if(data.inputPresets&&data.inputPresets.length)inputPresets=data.inputPresets;
 if(data.outputPresets&&data.outputPresets.length)outputPresets=data.outputPresets;
@@ -1493,13 +1498,12 @@ renderPresetEditors();
 }
 
 async function saveSettings(){
-const model=document.getElementById('settingDefaultModel').value;
 // 合并输入框中未提交的内容
 const ipVal=document.getElementById('inputPresetInput').value.trim();
 if(ipVal&&!inputPresets.includes(ipVal))inputPresets.push(ipVal);
 const opVal=document.getElementById('outputPresetInput').value.trim();
 if(opVal&&!outputPresets.includes(opVal))outputPresets.push(opVal);
-const res=await fetch(API+'/settings',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({defaultModel:model,activeProviderId:activeProviderId,inputPresets:inputPresets,outputPresets:outputPresets})});
+const res=await fetch(API+'/settings',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({activeProviderId:activeProviderId,inputPresets:inputPresets,outputPresets:outputPresets})});
 if(res.ok){
 toast('已保存','success');
 }
