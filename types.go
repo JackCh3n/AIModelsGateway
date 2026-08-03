@@ -12,6 +12,7 @@ type Provider struct {
 	Format         string            `json:"format"`         // "openai" 或 "anthropic"
 	Models         []string          `json:"models"`         // 支持的模型列表
 	DisabledModels []string          `json:"disabledModels"` // 被禁用的模型
+	DefaultModel   string            `json:"defaultModel"`   // 站点默认模型（model=all时使用）
 	ModelConfigs   []ModelConfig     `json:"modelConfigs"`   // 每个模型的上下文配置
 	CustomHeaders  map[string]string `json:"customHeaders"`  // 自定义请求头
 	Status         string            `json:"status"`         // active, disabled
