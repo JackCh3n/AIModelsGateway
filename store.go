@@ -292,19 +292,27 @@ func getModelConfig(p *Provider, model string) *ModelConfig {
 }
 
 // setModelConfig 设置或更新 provider 下指定模型的上下文配置
+// 如果 inputLimit 和 outputLimit 都为空，则删除该配置
 func setModelConfig(providerID string, mc ModelConfig) bool {
 	cfg := loadConfig()
 	for i := range cfg.Providers {
 		if cfg.Providers[i].ID == providerID {
 			for j := range cfg.Providers[i].ModelConfigs {
 				if cfg.Providers[i].ModelConfigs[j].Model == mc.Model {
-					cfg.Providers[i].ModelConfigs[j] = mc
+					if mc.InputLimit == "" && mc.OutputLimit == "" {
+						// 删除
+						cfg.Providers[i].ModelConfigs = append(cfg.Providers[i].ModelConfigs[:j], cfg.Providers[i].ModelConfigs[j+1:]...)
+					} else {
+						cfg.Providers[i].ModelConfigs[j] = mc
+					}
 					saveConfig()
 					return true
 				}
 			}
-			// 不存在则新增
-			cfg.Providers[i].ModelConfigs = append(cfg.Providers[i].ModelConfigs, mc)
+			// 不存在且非空则新增
+			if mc.InputLimit != "" || mc.OutputLimit != "" {
+				cfg.Providers[i].ModelConfigs = append(cfg.Providers[i].ModelConfigs, mc)
+			}
 			saveConfig()
 			return true
 		}
