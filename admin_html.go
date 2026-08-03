@@ -72,10 +72,10 @@ tr:hover{background:var(--hover)}
 .stat-card{background:var(--card);border:1px solid var(--border);border-radius:var(--radius);padding:20px;text-align:center;box-shadow:var(--shadow)}
 .stat-value{font-size:28px;font-weight:700;color:var(--accent)}
 .stat-label{font-size:13px;color:var(--muted);margin-top:4px}
-.toast{position:fixed;bottom:24px;right:24px;padding:12px 20px;border-radius:var(--radius);font-size:14px;z-index:200;animation:slideIn .3s}
+.toast{position:fixed;top:80px;right:24px;padding:12px 20px;border-radius:var(--radius);font-size:14px;z-index:200;animation:slideInRight .3s;max-width:400px;box-shadow:0 4px 12px rgba(0,0,0,.15)}
 .toast-success{background:var(--green);color:#fff}
 .toast-error{background:var(--red);color:#fff}
-@keyframes slideIn{from{transform:translateX(100%);opacity:0}to{transform:translateX(0);opacity:1}}
+@keyframes slideInRight{from{transform:translateX(120%);opacity:0}to{transform:translateX(0);opacity:1}}
 .empty{text-align:center;padding:40px;color:var(--muted)}
 .mono{font-family:'Courier New',monospace;font-size:13px}
 .test-result{margin-top:12px;padding:12px;border-radius:var(--radius);font-size:13px}
@@ -101,6 +101,10 @@ tr:hover{background:var(--hover)}
 .model-row{margin-top:8px}
 .url-hint{font-size:11px;color:var(--muted);font-family:'Courier New',monospace;margin-top:4px;word-break:break-all}
 .expand-btn{font-size:12px;color:var(--accent);cursor:pointer;background:none;border:none;padding:2px 6px}
+.copy-btn{display:inline-flex;align-items:center;gap:4px;padding:2px 8px;font-size:11px;border-radius:4px;border:1px solid var(--border);background:var(--card);color:var(--muted);cursor:pointer;transition:.2s;vertical-align:middle}
+.copy-btn:hover{border-color:var(--accent);color:var(--accent)}
+.copy-btn.copied{background:var(--green);color:#fff;border-color:var(--green)}
+.url-with-copy{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
 </style>
 </head>
 <body>
@@ -116,6 +120,7 @@ tr:hover{background:var(--hover)}
 <div class="container">
 <div class="tabs">
 <button class="tab active" onclick="switchTab(event,'providers')">中转站管理</button>
+<button class="tab" onclick="switchTab(event,'aliases')">模型路由</button>
 <button class="tab" onclick="switchTab(event,'keys')">API Keys</button>
 <button class="tab" onclick="switchTab(event,'stats')">用量统计</button>
 <button class="tab" onclick="switchTab(event,'settings')">设置</button>
@@ -125,8 +130,18 @@ tr:hover{background:var(--hover)}
 <!-- 中转站管理 -->
 <div class="panel active" id="panel-providers">
 <div class="card">
-<div class="card-title">中转站列表 <button class="btn btn-primary" onclick="showProviderModal()">+ 添加中转站</button></div>
+<div class="card-title">中转站列表 <div style="display:flex;gap:8px"><button class="btn btn-outline" onclick="importProvider()">导入配置</button><button class="btn btn-primary" onclick="showProviderModal()">+ 添加中转站</button></div></div>
 <div id="providerList"></div>
+<input type="file" id="importFile" accept=".json" style="display:none" onchange="handleImportFile(event)">
+</div>
+</div>
+
+<!-- 模型路由 -->
+<div class="panel" id="panel-aliases">
+<div class="card">
+<div class="card-title">模型路由别名 <button class="btn btn-primary" onclick="showAliasModal()">+ 添加别名</button></div>
+<p style="color:var(--muted);font-size:13px;margin-bottom:16px">客户端用固定的模型名调用网关，网关自动路由到指定的站点和模型。切换实际模型时只需修改别名，无需改客户端配置。</p>
+<div id="aliasList"></div>
 </div>
 </div>
 
@@ -175,21 +190,21 @@ tr:hover{background:var(--hover)}
 <p style="color:var(--muted);font-size:13px;margin-bottom:12px">在 Trae / WorkBuddy / Claude Code 等工具中使用以下配置：</p>
 <div class="config-box">
 <h4>OpenAI 格式 (Trae / WorkBuddy)</h4>
-<div class="config-line">Base URL: <span id="cfgOpenAIUrl">http://127.0.0.1:3458/v1</span></div>
+<div class="config-line">Base URL: <span id="cfgOpenAIUrl">http://127.0.0.1:3458/v1</span> <button class="copy-btn" onclick="copyText(document.getElementById('cfgOpenAIUrl').textContent,this)">复制</button></div>
 <div class="config-line">API Key: <span id="cfgOpenAIKey">在 API Keys 页面生成</span></div>
 <div class="config-line">Model: <span id="cfgModel">gpt-4o-mini</span></div>
 </div>
 <div class="config-box">
 <h4>Anthropic 格式 (Claude Code / Cline)</h4>
-<div class="config-line">Base URL: <span id="cfgAnthropicUrl">http://127.0.0.1:3458</span></div>
+<div class="config-line">Base URL: <span id="cfgAnthropicUrl">http://127.0.0.1:3458</span> <button class="copy-btn" onclick="copyText(document.getElementById('cfgAnthropicUrl').textContent,this)">复制</button></div>
 <div class="config-line">API Key: <span id="cfgAnthropicKey">在 API Keys 页面生成</span></div>
 <div class="config-line">Model: <span id="cfgModel2">gpt-4o-mini</span></div>
 </div>
 <div class="config-box">
 <h4>指定站点调用 (URL 路径)</h4>
 <p style="color:var(--muted);font-size:12px;margin-bottom:6px">在路径中加入 /p/{站点ID} 即可指定站点，模型在请求体中指定：</p>
-<div class="config-line">OpenAI: <span id="cfgPOpenAI">/v1/chat/completions/p/{站点ID}</span></div>
-<div class="config-line">Anthropic: <span id="cfgPAnthropic">/v1/messages/p/{站点ID}</span></div>
+<div class="config-line">OpenAI: <span id="cfgPOpenAI">/v1/chat/completions/p/{站点ID}</span> <button class="copy-btn" onclick="copyText(document.getElementById('cfgPOpenAI').textContent,this)">复制</button></div>
+<div class="config-line">Anthropic: <span id="cfgPAnthropic">/v1/messages/p/{站点ID}</span> <button class="copy-btn" onclick="copyText(document.getElementById('cfgPAnthropic').textContent,this)">复制</button></div>
 </div>
 <div class="config-box">
 <h4>健康检查</h4>
@@ -249,6 +264,30 @@ tr:hover{background:var(--hover)}
 </div>
 </div>
 
+<!-- Alias Modal -->
+<div class="modal-overlay" id="aliasModal">
+<div class="modal">
+<div class="modal-title" id="aliasModalTitle">添加路由别名</div>
+<input type="hidden" id="aliasId">
+<div class="form-group">
+<label>别名 (客户端请求时用的模型名)</label>
+<input class="input" id="aliasName" placeholder="如: workbuddy / default / my-model">
+</div>
+<div class="form-group">
+<label>目标站点</label>
+<select class="select" id="aliasProvider"></select>
+</div>
+<div class="form-group">
+<label>实际模型</label>
+<input class="input" id="aliasModel" placeholder="如: gpt-4o-mini">
+</div>
+<div class="modal-actions">
+<button class="btn btn-outline" onclick="closeModal('aliasModal')">取消</button>
+<button class="btn btn-primary" onclick="saveAlias()">保存</button>
+</div>
+</div>
+</div>
+
 <!-- Key Modal -->
 <div class="modal-overlay" id="keyModal">
 <div class="modal">
@@ -298,6 +337,7 @@ document.getElementById('panel-'+name).classList.add('active');
 if(name==='stats')loadStats();
 if(name==='config')loadConfig();
 if(name==='settings')loadSettings();
+if(name==='aliases')loadAliases();
 }
 
 // --- 模型标签输入 ---
@@ -369,6 +409,7 @@ html+='<td><span class="badge badge-'+p.status+'">'+p.status+'</span></td>';
 html+='<td>';
 if(!isActive&&p.status==='active')html+='<button class="btn btn-sm btn-success" onclick="setActive(\''+p.id+'\')">启用</button> ';
 html+='<button class="btn btn-sm btn-outline" onclick="editProvider(\''+p.id+'\')">编辑</button> ';
+html+='<button class="btn btn-sm btn-outline" onclick="exportProvider(\''+p.id+'\')">导出</button> ';
 html+='<button class="btn btn-sm btn-danger" onclick="deleteProvider(\''+p.id+'\')">删除</button>';
 html+='</td>';
 html+='</tr>';
@@ -376,10 +417,11 @@ html+='</tr>';
 html+='<tr id="models-'+p.id+'" style="display:none"><td colspan="7"><div class="model-row">';
 for(const m of (p.models||[])){
 const enabled=!disabledSet.has(m);
+const modelUrl=getModelUrl(p,m);
 html+='<span class="model-chip'+(enabled?'':' disabled')+'">';
 html+='<button class="chip-toggle" onclick="toggleModel(\''+p.id+'\',\''+esc(m)+'\')" title="'+(enabled?'点击禁用':'点击启用')+'">'+(enabled?'✅':'⏸️')+'</button> ';
 html+=esc(m);
-html+=' <span class="url-hint" style="display:block">'+getModelUrl(p,m)+'</span>';
+html+=' <span class="url-hint" style="display:block">'+modelUrl+' <button class="copy-btn" onclick="copyText(\''+esc(modelUrl)+'\',this)">复制</button></span>';
 html+='</span>';
 }
 if(!p.models||p.models.length===0)html+='<span class="empty" style="padding:8px">暂无模型</span>';
@@ -526,6 +568,135 @@ result.innerHTML='<div class="test-error">请求失败: '+esc(e.message)+'</div>
 }
 btn.innerHTML='测试连接';
 btn.disabled=false;
+}
+
+// --- 中转站导出/导入 ---
+function exportProvider(id){
+window.location.href=API+'/providers/export/'+id;
+toast('正在下载配置文件','success');
+}
+
+function importProvider(){
+document.getElementById('importFile').click();
+}
+
+async function handleImportFile(event){
+const file=event.target.files[0];
+if(!file)return;
+const text=await file.text();
+try{
+const p=JSON.parse(text);
+const res=await fetch(API+'/providers/import',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(p)});
+if(res.ok){
+toast('导入成功','success');
+loadProviders();
+}else{
+toast('导入失败','error');
+}
+}catch(e){
+toast('文件格式错误: '+e.message,'error');
+}
+event.target.value='';
+}
+
+// --- URL 一键复制 ---
+async function copyText(text,btn){
+try{
+await navigator.clipboard.writeText(text);
+if(btn){
+btn.classList.add('copied');
+const old=btn.innerHTML;
+btn.innerHTML='✓ 已复制';
+setTimeout(()=>{btn.classList.remove('copied');btn.innerHTML=old;},1500);
+}
+toast('已复制到剪贴板','success');
+}catch(e){
+toast('复制失败','error');
+}
+}
+
+// --- 模型路由别名 ---
+async function loadAliases(){
+const res=await fetch(API+'/aliases');
+const data=await res.json();
+const el=document.getElementById('aliasList');
+if(!data||data.length===0){
+el.innerHTML='<div class="empty">暂无别名，点击右上角添加</div>';
+return;
+}
+const base=location.protocol+'//'+location.host;
+let html='<table><tr><th>别名</th><th>目标站点</th><th>实际模型</th><th>调用URL</th><th>操作</th></tr>';
+for(const a of data){
+html+='<tr>';
+html+='<td class="mono">'+esc(a.name)+'</td>';
+html+='<td>'+esc(a.providerName||a.providerId)+'</td>';
+html+='<td class="mono">'+esc(a.model)+'</td>';
+html+='<td><div class="url-with-copy"><span class="mono" style="font-size:11px">'+base+'/v1/chat/completions</span> <button class="copy-btn" onclick="copyText(\''+base+'/v1/chat/completions\',this)">复制</button></div></td>';
+html+='<td><button class="btn btn-sm btn-outline" onclick="editAlias(\''+a.id+'\')">编辑</button> <button class="btn btn-sm btn-danger" onclick="deleteAlias(\''+a.id+'\')">删除</button></td>';
+html+='</tr>';
+}
+html+='</table>';
+el.innerHTML=html;
+}
+
+function showAliasModal(){
+document.getElementById('aliasModalTitle').textContent='添加路由别名';
+document.getElementById('aliasId').value='';
+document.getElementById('aliasName').value='';
+document.getElementById('aliasModel').value='';
+// 填充站点下拉
+const sel=document.getElementById('aliasProvider');
+sel.innerHTML='';
+for(const p of allProvidersCache){
+if(p.status==='active')sel.innerHTML+='<option value="'+p.id+'">'+esc(p.name)+' ('+p.format+')</option>';
+}
+document.getElementById('aliasModal').classList.add('show');
+}
+
+async function editAlias(id){
+const res=await fetch(API+'/aliases');
+const data=await res.json();
+const a=data.find(x=>x.id===id);
+if(!a)return;
+document.getElementById('aliasModalTitle').textContent='编辑路由别名';
+document.getElementById('aliasId').value=a.id;
+document.getElementById('aliasName').value=a.name;
+document.getElementById('aliasModel').value=a.model;
+const sel=document.getElementById('aliasProvider');
+sel.innerHTML='';
+for(const p of allProvidersCache){
+const sel2=p.id===a.providerId?' selected':'';
+sel.innerHTML+='<option value="'+p.id+'"'+sel2+'>'+esc(p.name)+' ('+p.format+')</option>';
+}
+document.getElementById('aliasModal').classList.add('show');
+}
+
+async function saveAlias(){
+const id=document.getElementById('aliasId').value;
+const body={
+name:document.getElementById('aliasName').value,
+providerId:document.getElementById('aliasProvider').value,
+model:document.getElementById('aliasModel').value
+};
+if(!body.name||!body.providerId||!body.model){
+toast('请填写所有字段','error');return;
+}
+const method=id?'PUT':'POST';
+const url=id?API+'/aliases/'+id:API+'/aliases';
+const res=await fetch(url,{method,headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+if(res.ok){
+closeModal('aliasModal');
+toast(id?'已更新':'已添加','success');
+loadAliases();
+}else{
+toast('操作失败','error');
+}
+}
+
+async function deleteAlias(id){
+if(!confirm('确定删除此别名？'))return;
+const res=await fetch(API+'/aliases/'+id,{method:'DELETE'});
+if(res.ok){toast('已删除','success');loadAliases();}
 }
 
 // --- Keys ---

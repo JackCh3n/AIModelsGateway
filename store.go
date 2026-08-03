@@ -56,6 +56,9 @@ func loadConfig() *Config {
 	if cfg.APIKeys == nil {
 		cfg.APIKeys = []APIKey{}
 	}
+	if cfg.Aliases == nil {
+		cfg.Aliases = []ModelAlias{}
+	}
 	if cfg.UsageLogs == nil {
 		cfg.UsageLogs = []UsageLog{}
 	}
@@ -260,6 +263,61 @@ func validateAPIKey(key string) bool {
 		}
 	}
 	return false
+}
+
+// --- ModelAlias CRUD ---
+
+func listAliases() []ModelAlias {
+	cfg := loadConfig()
+	// 填充 providerName
+	for i := range cfg.Aliases {
+		if p := getProvider(cfg.Aliases[i].ProviderID); p != nil {
+			cfg.Aliases[i].ProviderName = p.Name
+		}
+	}
+	return cfg.Aliases
+}
+
+func addAlias(a ModelAlias) {
+	cfg := loadConfig()
+	a.ID = generateID("alias")
+	cfg.Aliases = append(cfg.Aliases, a)
+	saveConfig()
+}
+
+func updateAlias(a ModelAlias) bool {
+	cfg := loadConfig()
+	for i := range cfg.Aliases {
+		if cfg.Aliases[i].ID == a.ID {
+			cfg.Aliases[i] = a
+			saveConfig()
+			return true
+		}
+	}
+	return false
+}
+
+func deleteAlias(id string) bool {
+	cfg := loadConfig()
+	for i := range cfg.Aliases {
+		if cfg.Aliases[i].ID == id {
+			cfg.Aliases = append(cfg.Aliases[:i], cfg.Aliases[i+1:]...)
+			saveConfig()
+			return true
+		}
+	}
+	return false
+}
+
+// getAliasByModel 根据模型名查找别名
+func getAliasByModel(model string) *ModelAlias {
+	cfg := loadConfig()
+	for i := range cfg.Aliases {
+		if cfg.Aliases[i].Name == model {
+			return &cfg.Aliases[i]
+		}
+	}
+	return nil
 }
 
 // --- Usage ---

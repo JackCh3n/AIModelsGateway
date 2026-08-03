@@ -45,10 +45,21 @@ type Settings struct {
 	DefaultModel     string `json:"defaultModel"`
 }
 
+// ModelAlias 模型路由别名
+// 客户端用固定模型名调用，网关自动路由到指定站点的指定模型
+type ModelAlias struct {
+	ID         string `json:"id"`
+	Name       string `json:"name"`       // 别名，客户端请求时用的模型名
+	ProviderID string `json:"providerId"` // 实际使用的站点 ID
+	ProviderName string `json:"providerName"` // 显示用
+	Model      string `json:"model"`      // 实际使用的模型
+}
+
 // Config 持久化配置
 type Config struct {
-	Providers []Provider `json:"providers"`
-	APIKeys   []APIKey   `json:"apiKeys"`
-	Settings  Settings   `json:"settings"`
-	UsageLogs []UsageLog `json:"usageLogs"`
+	Providers []Provider   `json:"providers"`
+	APIKeys   []APIKey     `json:"apiKeys"`
+	Aliases   []ModelAlias `json:"aliases"`
+	Settings  Settings     `json:"settings"`
+	UsageLogs []UsageLog   `json:"usageLogs"`
 }

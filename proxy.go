@@ -26,6 +26,29 @@ func proxyRequest(w http.ResponseWriter, r *http.Request, clientFormat string, p
 		return
 	}
 
+	// 解析请求判断是否流式
+	var params map[string]any
+	json.Unmarshal(body, &params)
+	isStream, _ := params["stream"].(bool)
+	model, _ := params["model"].(string)
+
+	// 模型别名路由：如果模型名匹配别名，自动路由到指定站点+模型
+	if model != "" {
+		if alias := getAliasByModel(model); alias != nil {
+			log.Printf("[alias] %s -> provider=%s model=%s", alias.Name, alias.ProviderID, alias.Model)
+			providerOverride = alias.ProviderID
+			model = alias.Model
+			params["model"] = model
+			body, _ = json.Marshal(params)
+		}
+	}
+
+	if model == "" {
+		model = getSettings().DefaultModel
+		params["model"] = model
+		body, _ = json.Marshal(params)
+	}
+
 	var provider *Provider
 	if providerOverride != "" {
 		provider = getProvider(providerOverride)
@@ -43,17 +66,6 @@ func proxyRequest(w http.ResponseWriter, r *http.Request, clientFormat string, p
 	if provider == nil {
 		writeError(w, clientFormat, http.StatusServiceUnavailable, "没有可用的中转站，请在管理后台添加")
 		return
-	}
-
-	// 解析请求判断是否流式
-	var params map[string]any
-	json.Unmarshal(body, &params)
-	isStream, _ := params["stream"].(bool)
-	model, _ := params["model"].(string)
-	if model == "" {
-		model = getSettings().DefaultModel
-		params["model"] = model
-		body, _ = json.Marshal(params)
 	}
 
 	// 校验该模型是否在该站点已启用（仅当站点有模型列表时校验）

@@ -208,6 +208,98 @@ func registerAdminRoutes(mux *http.ServeMux) {
 		result := testProvider(req.BaseURL, req.APIKey, req.Format, req.Model)
 		writeJSON(w, http.StatusOK, result)
 	}))
+
+	// --- 模型别名 CRUD ---
+	mux.HandleFunc("/admin/api/aliases", corsHandler(func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case "GET":
+			writeJSON(w, http.StatusOK, listAliases())
+		case "POST":
+			var a ModelAlias
+			if err := json.NewDecoder(r.Body).Decode(&a); err != nil {
+				writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+				return
+			}
+			addAlias(a)
+			writeJSON(w, http.StatusOK, a)
+		default:
+			writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		}
+	}))
+
+	mux.HandleFunc("/admin/api/aliases/", corsHandler(func(w http.ResponseWriter, r *http.Request) {
+		id := strings.TrimPrefix(r.URL.Path, "/admin/api/aliases/")
+		if id == "" {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "id required"})
+			return
+		}
+		switch r.Method {
+		case "PUT":
+			var a ModelAlias
+			if err := json.NewDecoder(r.Body).Decode(&a); err != nil {
+				writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+				return
+			}
+			a.ID = id
+			if !updateAlias(a) {
+				writeJSON(w, http.StatusNotFound, map[string]string{"error": "alias not found"})
+				return
+			}
+			writeJSON(w, http.StatusOK, a)
+		case "DELETE":
+			if !deleteAlias(id) {
+				writeJSON(w, http.StatusNotFound, map[string]string{"error": "alias not found"})
+				return
+			}
+			writeJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
+		default:
+			writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		}
+	}))
+
+	// --- 中转站导出/导入 ---
+	// 导出单个: GET /admin/api/providers/export/{id}
+	mux.HandleFunc("/admin/api/providers/export/", corsHandler(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != "GET" {
+			writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "GET required"})
+			return
+		}
+		id := strings.TrimPrefix(r.URL.Path, "/admin/api/providers/export/")
+		p := getProvider(id)
+		if p == nil {
+			writeJSON(w, http.StatusNotFound, map[string]string{"error": "provider not found"})
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Content-Disposition", "attachment; filename=provider_"+id+".json")
+		json.NewEncoder(w).Encode(p)
+	}))
+
+	// 导入: POST /admin/api/providers/import
+	mux.HandleFunc("/admin/api/providers/import", corsHandler(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != "POST" {
+			writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "POST required"})
+			return
+		}
+		var p Provider
+		if err := json.NewDecoder(r.Body).Decode(&p); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		// 重新生成 ID，避免冲突
+		p.ID = generateID("prov")
+		if p.Status == "" {
+			p.Status = "active"
+		}
+		if p.Models == nil {
+			p.Models = []string{}
+		}
+		if p.DisabledModels == nil {
+			p.DisabledModels = []string{}
+		}
+		addProvider(p)
+		writeJSON(w, http.StatusOK, p)
+	}))
 }
 
 // testProvider 测试中转站 key 和模型可用性
