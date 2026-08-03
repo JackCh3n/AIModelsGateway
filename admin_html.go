@@ -1304,17 +1304,7 @@ if(toastTimer)clearTimeout(toastTimer);
 toastTimer=setTimeout(()=>{el.style.display='none';el.className='';},3000);
 }
 
-// 弹窗：点击遮罩空白处关闭，但点击弹窗内容不关闭
-document.querySelectorAll('.modal-overlay').forEach(o=>{
-o.addEventListener('click',e=>{
-// 只有直接点击遮罩层本身才关闭，点击子元素(弹窗内容)不关闭
-if(e.target===o)o.classList.remove('show');
-});
-});
-// 阻止弹窗内容点击事件冒泡
-document.querySelectorAll('.modal').forEach(m=>{
-m.addEventListener('click',e=>{e.stopPropagation();});
-});
+// 弹窗只能通过取消/保存按钮关闭，点击遮罩不关闭
 
 initTheme();
 loadProviders();
