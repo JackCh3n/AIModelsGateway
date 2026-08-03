@@ -5,7 +5,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"io"
 	"log"
 	"os"
 	"path/filepath"
@@ -229,27 +228,12 @@ func checkinProvider(providerID string) (bool, string) {
 	cfg := loadConfig()
 	for i := range cfg.Providers {
 		if cfg.Providers[i].ID == providerID {
-			url := cfg.Providers[i].CheckinURL
-			if url == "" {
+			if cfg.Providers[i].CheckinURL == "" {
 				return false, "该站点未配置打卡地址"
 			}
-			req, err := newHTTPRequest("POST", url, nil, cfg.Providers[i].CustomHeaders)
-			if err != nil {
-				return false, "创建请求失败: " + err.Error()
-			}
-			resp, err := httpClient.Do(req)
-			if err != nil {
-				return false, "请求失败: " + err.Error()
-			}
-			defer resp.Body.Close()
-			body, _ := io.ReadAll(resp.Body)
-			if resp.StatusCode >= 200 && resp.StatusCode < 300 {
-				// 记录打卡时间
-				cfg.Providers[i].LastCheckin = time.Now()
-				saveConfig()
-				return true, string(body)
-			}
-			return false, "HTTP " + fmt.Sprintf("%d", resp.StatusCode) + ": " + truncate(string(body), 300)
+			cfg.Providers[i].LastCheckin = time.Now()
+			saveConfig()
+			return true, "已记录打卡时间"
 		}
 	}
 	return false, "站点不存在"

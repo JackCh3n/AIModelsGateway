@@ -1020,17 +1020,19 @@ return m+'-'+day+' '+hh+':'+mm;
 
 async function doCheckin(id,btn){
 if(!btn)btn=document.querySelector('[data-pid="'+id+'"]');
-if(btn){btn.disabled=true;btn.innerHTML='<span class="loading"></span> 打卡中...';}
+const p=allProvidersCache.find(x=>x.id===id);
+if(!p||!p.checkinUrl){toast('未配置打卡地址','error');return;}
+// 新窗口打开签到链接
+window.open(p.checkinUrl,'_blank');
+// 记录打卡时间
 const res=await fetch(API+'/providers/checkin/'+id,{method:'POST'});
 const data=await res.json();
-if(btn)btn.disabled=false;
 if(data.success){
-toast('打卡成功','success');
+toast('已记录打卡时间','success');
 if(btn)btn.innerHTML='已打卡 '+fmtCheckin(new Date().toISOString());
 loadProviders();
 }else{
-toast('打卡失败: '+(data.message||''),'error');
-if(btn)btn.innerHTML='打卡';
+toast('记录失败: '+(data.message||''),'error');
 }
 }
 
