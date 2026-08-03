@@ -9,6 +9,9 @@ import (
 	"time"
 )
 
+// Version 版本号，编译时通过 ldflags 注入
+var Version = "dev"
+
 func corsHandler(h http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Access-Control-Allow-Origin", "*")
@@ -39,7 +42,7 @@ func startServer(port int) error {
 	mux.HandleFunc("/health", corsHandler(func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]any{
 			"status":  "ok",
-			"version": "1.0",
+			"version": Version,
 		})
 	}))
 
@@ -172,7 +175,8 @@ func startServer(port int) error {
 func adminPageHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.WriteHeader(http.StatusOK)
-	w.Write([]byte(adminHTML))
+	html := strings.Replace(adminHTML, "{{VERSION}}", Version, 1)
+	w.Write([]byte(html))
 }
 
 // 确保 json 包被使用

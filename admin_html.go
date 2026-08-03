@@ -28,7 +28,7 @@ body{font-family:'Segoe UI',system-ui,sans-serif;background:var(--bg);color:var(
 .header-right{display:flex;align-items:center;gap:12px}
 .theme-toggle{width:38px;height:38px;border-radius:50%;border:1px solid var(--border);background:var(--card);cursor:pointer;font-size:16px;display:flex;align-items:center;justify-content:center;transition:.2s}
 .theme-toggle:hover{border-color:var(--accent);transform:scale(1.05)}
-.container{max-width:1100px;margin:0 auto;padding:24px}
+.container{max-width:1400px;margin:0 auto;padding:24px}
 .tabs{display:flex;gap:4px;margin-bottom:20px}
 .tab{padding:10px 20px;background:var(--card);border:1px solid var(--border);border-radius:var(--radius) var(--radius) 0 0;cursor:pointer;color:var(--muted);font-size:14px;transition:.2s}
 .tab:hover{color:var(--text);background:var(--hover)}
@@ -120,7 +120,10 @@ tr:hover{background:var(--hover)}
 <div class="header">
 <div class="header-left">
 <h1>AI Models <span>Gateway</span></h1>
+<div style="display:flex;align-items:center;gap:12px">
 <div class="info" id="headerInfo">加载中...</div>
+<span style="font-size:11px;color:var(--muted);opacity:.6">v{{VERSION}}</span>
+</div>
 </div>
 <div class="header-right">
 <button class="theme-toggle" onclick="toggleTheme()" id="themeBtn" title="切换主题">🌙</button>
@@ -148,6 +151,11 @@ tr:hover{background:var(--hover)}
 
 <!-- 模型路由 -->
 <div class="panel" id="panel-aliases">
+<div class="card">
+<div class="card-title">全局默认路由</div>
+<p style="color:var(--muted);font-size:13px;margin-bottom:16px">客户端不指定站点时，默认路由到当前启用的站点和默认模型。</p>
+<div id="globalRouteInfo"></div>
+</div>
 <div class="card">
 <div class="card-title">模型路由别名 <button class="btn btn-primary" onclick="showAliasModal()">+ 添加别名</button></div>
 <p style="color:var(--muted);font-size:13px;margin-bottom:16px">客户端用固定的模型名调用网关，网关自动路由到指定的站点和模型。切换实际模型时只需修改别名，无需改客户端配置。</p>
@@ -784,7 +792,7 @@ html+='<td class="mono">'+esc(p.baseUrl)+'</td>';
 html+='<td>'+enabledCount+'/'+totalCount+' <button class="expand-btn" onclick="toggleModels(\''+p.id+'\')">展开</button></td>';
 html+='<td>'+activeKeyCount+'/'+totalKeyCount+' keys</td>';
 html+='<td><span class="badge badge-'+p.status+'">'+p.status+'</span></td>';
-html+='<td>';
+html+='<td style="white-space:nowrap">';
 if(!isActive&&p.status==='active')html+='<button class="btn btn-sm btn-success" onclick="setActive(\''+p.id+'\')">启用</button> ';
 html+='<button class="btn btn-sm btn-outline" onclick="editProvider(\''+p.id+'\')">编辑</button> ';
 html+='<button class="btn btn-sm btn-outline" onclick="exportProvider(\''+p.id+'\')">导出</button> ';
@@ -1156,6 +1164,8 @@ toast('复制失败','error');
 
 // --- 模型路由别名 ---
 async function loadAliases(){
+// 加载全局路由信息
+await loadGlobalRoute();
 const res=await fetch(API+'/aliases');
 const data=await res.json();
 const el=document.getElementById('aliasList');
@@ -1174,6 +1184,33 @@ html+='<td><div class="url-with-copy"><span class="mono" style="font-size:11px">
 html+='<td><button class="btn btn-sm btn-outline" onclick="editAlias(\''+a.id+'\')">编辑</button> <button class="btn btn-sm btn-danger" onclick="deleteAlias(\''+a.id+'\')">删除</button></td>';
 html+='</tr>';
 }
+html+='</table>';
+el.innerHTML=html;
+}
+
+async function loadGlobalRoute(){
+const[sRes,pRes]=await Promise.all([fetch(API+'/settings'),fetch(API+'/providers')]);
+const settings=await sRes.json();
+const providers=await pRes.json();
+allProvidersCache=providers||[];
+const el=document.getElementById('globalRouteInfo');
+const activeProvider=(providers||[]).find(p=>p.id===settings.activeProviderId);
+if(!activeProvider){
+el.innerHTML='<div class="empty">未启用任何站点，请在中转站列表点击「启用」</div>';
+return;
+}
+const base=location.protocol+'//'+location.host;
+const openaiUrl=base+'/v1/chat/completions';
+const anthropicUrl=base+'/v1/messages';
+const providerUrl=base+'/v1/chat/completions/p/'+activeProvider.id;
+let html='<table>';
+html+='<tr><td style="width:120px;color:var(--muted)">启用站点</td><td><strong>'+esc(activeProvider.name)+'</strong> <span class="badge badge-'+activeProvider.format+'">'+activeProvider.format+'</span></td></tr>';
+html+='<tr><td style="color:var(--muted)">默认模型</td><td class="mono">'+esc(settings.defaultModel||'-')+'</td></tr>';
+html+='<tr><td style="color:var(--muted)">站点地址</td><td class="mono" style="font-size:12px">'+esc(activeProvider.baseUrl)+'</td></tr>';
+html+='<tr><td style="color:var(--muted)">已启用模型</td><td style="font-size:12px">'+activeProvider.models.filter(m=>!(activeProvider.disabledModels||[]).includes(m)).length+' 个</td></tr>';
+html+='<tr><td style="color:var(--muted)">OpenAI 调用</td><td><div class="url-with-copy"><span class="mono" style="font-size:11px">'+openaiUrl+'</span> <button class="copy-btn" onclick="copyText(\''+openaiUrl+'\',this)">复制</button></div></td></tr>';
+html+='<tr><td style="color:var(--muted)">Anthropic 调用</td><td><div class="url-with-copy"><span class="mono" style="font-size:11px">'+anthropicUrl+'</span> <button class="copy-btn" onclick="copyText(\''+anthropicUrl+'\',this)">复制</button></div></td></tr>';
+html+='<tr><td style="color:var(--muted)">指定站点调用</td><td><div class="url-with-copy"><span class="mono" style="font-size:11px">'+providerUrl+'</span> <button class="copy-btn" onclick="copyText(\''+providerUrl+'\',this)">复制</button></div></td></tr>';
 html+='</table>';
 el.innerHTML=html;
 }

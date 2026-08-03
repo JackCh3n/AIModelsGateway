@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"runtime"
+	"time"
 )
 
 func main() {
@@ -32,7 +33,8 @@ func buildAndStart(port int) {
 	}
 
 	fmt.Println("编译中...")
-	cmd := exec.Command("go", "build", "-o", exe, ".")
+	ver := time.Now().Format("200601021504")
+	cmd := exec.Command("go", "build", "-ldflags", "-X main.Version="+ver, "-o", exe, ".")
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	if err := cmd.Run(); err != nil {

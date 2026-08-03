@@ -273,6 +273,13 @@ func registerAdminRoutes(mux *http.ServeMux) {
 			model = getSettings().DefaultModel
 		}
 		result := testProvider(p.BaseURL, pickAPIKey(p), p.Format, model, p.CustomHeaders)
+		// 记录测试用量
+		if success, ok := result["success"].(bool); ok && success {
+			input, _ := result["inputTokens"].(int)
+			output, _ := result["outputTokens"].(int)
+			logEntry := newUsageLog(p.ID, p.Name, model, input, output, p.Format)
+			addUsageLog(logEntry)
+		}
 		writeJSON(w, http.StatusOK, result)
 	}))
 
@@ -455,7 +462,10 @@ func testProvider(baseURL, apiKey, format, model string, customHeaders map[strin
 		content = fmt.Sprintf("%v", getNested(respObj, "choices", 0, "message", "content"))
 	}
 
-	log.Printf("  test: %s %s -> %d content=%s", baseURL, model, resp.StatusCode, truncate(content, 50))
+	// 提取用量
+	input, output := extractUsage(respObj, format)
+
+	log.Printf("  test: %s %s -> %d content=%s tokens=%d/%d", baseURL, model, resp.StatusCode, truncate(content, 50), input, output)
 
 	return map[string]any{
 		"success":     true,
@@ -465,6 +475,8 @@ func testProvider(baseURL, apiKey, format, model string, customHeaders map[strin
 		"testUrl":     upstreamURL,
 		"testMessage": testMessage,
 		"reqHeaders":  headers,
+		"inputTokens": input,
+		"outputTokens": output,
 	}
 }
 

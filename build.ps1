@@ -39,12 +39,13 @@ if ($conn) {
 
 # 3. 编译
 Write-Host "[3/4] 编译中..." -ForegroundColor Yellow
-go build -o $exeName .
+$ver = Get-Date -Format "yyyyMMddHHmm"
+go build -ldflags "-X main.Version=$ver" -o $exeName .
 if ($LASTEXITCODE -ne 0) {
     Write-Host "  编译失败!" -ForegroundColor Red
     exit 1
 }
-Write-Host "  编译成功 -> $exeName" -ForegroundColor Green
+Write-Host "  编译成功 -> $exeName (v$ver)" -ForegroundColor Green
 
 # 4. 启动
 Write-Host "[4/4] 启动服务..." -ForegroundColor Yellow
