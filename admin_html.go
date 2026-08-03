@@ -105,6 +105,11 @@ tr:hover{background:var(--hover)}
 .copy-btn:hover{border-color:var(--accent);color:var(--accent)}
 .copy-btn.copied{background:var(--green);color:#fff;border-color:var(--green)}
 .url-with-copy{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+.chat-msg{max-width:80%;padding:8px 12px;border-radius:8px;margin-bottom:8px;word-break:break-word;white-space:pre-wrap;font-size:14px;line-height:1.5}
+.chat-msg.user{background:var(--primary);color:#fff;margin-left:auto}
+.chat-msg.assistant{background:var(--card);border:1px solid var(--border);margin-right:auto}
+.chat-msg.error{background:#fee;color:#c33;border:1px solid #fcc;margin-right:auto}
+.chat-msg .role{font-size:11px;opacity:.7;margin-bottom:2px}
 .key-item{display:flex;align-items:center;gap:8px;padding:6px 8px;background:var(--bg);border:1px solid var(--border);border-radius:var(--radius);margin-bottom:4px;font-size:13px}
 .key-item .key-val{font-family:'Courier New',monospace;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .key-item .key-name{color:var(--muted);font-size:12px}
@@ -127,6 +132,7 @@ tr:hover{background:var(--hover)}
 <button class="tab" onclick="switchTab(event,'aliases')">模型路由</button>
 <button class="tab" onclick="switchTab(event,'keys')">API Keys</button>
 <button class="tab" onclick="switchTab(event,'stats')">用量统计</button>
+<button class="tab" onclick="switchTab(event,'chat')">聊天测试</button>
 <button class="tab" onclick="switchTab(event,'settings')">设置</button>
 <button class="tab" onclick="switchTab(event,'config')">接入配置</button>
 </div>
@@ -199,6 +205,24 @@ tr:hover{background:var(--hover)}
 <div class="card-title">模型上下文配置 <button class="btn btn-primary" onclick="showGlobalModelConfigModal()">+ 添加配置</button></div>
 <p style="color:var(--muted);font-size:13px;margin-bottom:16px">为指定模型配置输入/输出上下文预算。配置后网关转发时自动覆盖 max_tokens，留空则走客户端值。</p>
 <div id="globalModelConfigList"></div>
+</div>
+</div>
+
+<!-- 聊天测试 -->
+<div class="panel" id="panel-chat">
+<div class="card" style="display:flex;flex-direction:column;height:calc(100vh - 200px);min-height:500px">
+<div class="card-title" style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+<span>聊天测试</span>
+<select class="select" id="chatProvider" onchange="onChatProviderChange()" style="width:auto"></select>
+<select class="select" id="chatModel" style="width:auto"></select>
+<select class="select" id="chatKey" style="width:auto;max-width:200px" title="选择测试的Key"></select>
+<button class="btn btn-outline" onclick="clearChat()">清空</button>
+</div>
+<div id="chatMessages" style="flex:1;overflow-y:auto;padding:12px;background:var(--bg);border:1px solid var(--border);border-radius:var(--radius);margin-bottom:12px"></div>
+<div style="display:flex;gap:8px">
+<textarea class="input" id="chatInput" placeholder="输入消息，Enter发送，Shift+Enter换行..." style="flex:1;resize:none;height:60px" onkeydown="handleChatKeydown(event)"></textarea>
+<button class="btn btn-primary" onclick="sendChatMessage()" id="chatSendBtn">发送</button>
+</div>
 </div>
 </div>
 
@@ -438,6 +462,199 @@ if(name==='stats')loadStats();
 if(name==='config')loadConfig();
 if(name==='settings')loadSettings();
 if(name==='aliases')loadAliases();
+if(name==='chat')initChat();
+}
+
+// --- 聊天测试 ---
+let chatHistory=[];
+let chatInitialized=false;
+
+async function initChat(){
+if(!chatInitialized){
+chatInitialized=true;
+document.getElementById('chatMessages').innerHTML='<div class="empty" style="text-align:center;padding:40px">选择站点、模型和Key，输入消息开始测试</div>';
+}
+await loadChatProviders();
+}
+
+async function loadChatProviders(){
+const res=await fetch(API+'/providers');
+const data=await res.json();
+allProvidersCache=data||[];
+const sel=document.getElementById('chatProvider');
+const curVal=sel.value;
+sel.innerHTML='';
+for(const p of data||[]){
+if(p.status==='active'){
+sel.innerHTML+='<option value="'+p.id+'">'+esc(p.name)+' ('+p.format+')</option>';
+}
+}
+if(curVal)sel.value=curVal;
+onChatProviderChange();
+}
+
+function onChatProviderChange(){
+const pid=document.getElementById('chatProvider').value;
+const p=allProvidersCache.find(x=>x.id===pid);
+// 填充模型
+const modelSel=document.getElementById('chatModel');
+modelSel.innerHTML='';
+if(p){
+const disabledSet=new Set(p.disabledModels||[]);
+for(const m of(p.models||[])){
+if(!disabledSet.has(m))modelSel.innerHTML+='<option value="'+esc(m)+'">'+esc(m)+'</option>';
+}
+}
+// 填充Key
+const keySel=document.getElementById('chatKey');
+keySel.innerHTML='';
+if(p){
+const activeKeys=(p.apiKeys||[]).filter(k=>k.status==='active');
+if(activeKeys.length===0&&p.apiKey){
+keySel.innerHTML='<option value="'+esc(p.apiKey)+'">'+esc(p.apiKey.substring(0,12)+'...')+'</option>';
+}
+for(const k of activeKeys){
+const masked=k.key.substring(0,8)+'...'+k.key.substring(k.key.length-4);
+let label=masked;
+if(k.name)label+=' ('+k.name+')';
+keySel.innerHTML+='<option value="'+esc(k.key)+'">'+esc(label)+'</option>';
+}
+}
+}
+
+function clearChat(){
+chatHistory=[];
+document.getElementById('chatMessages').innerHTML='<div class="empty" style="text-align:center;padding:40px">对话已清空</div>';
+}
+
+function handleChatKeydown(e){
+if(e.key==='Enter'&&!e.shiftKey){
+e.preventDefault();
+sendChatMessage();
+}
+}
+
+function appendChatMsg(role,content){
+const el=document.getElementById('chatMessages');
+// 清除空状态提示
+if(el.querySelector('.empty'))el.innerHTML='';
+const div=document.createElement('div');
+div.className='chat-msg '+(role==='error'?'error':role);
+div.innerHTML='<div class="role">'+(role==='user'?'你':role==='assistant'?'AI':'错误')+'</div>'+esc(content);
+el.appendChild(div);
+el.scrollTop=el.scrollHeight;
+return div;
+}
+
+async function sendChatMessage(){
+const input=document.getElementById('chatInput');
+const msg=input.value.trim();
+if(!msg)return;
+const pid=document.getElementById('chatProvider').value;
+const model=document.getElementById('chatModel').value;
+const apiKey=document.getElementById('chatKey').value;
+if(!pid||!model||!apiKey){
+toast('请选择站点、模型和Key','error');return;
+}
+input.value='';
+appendChatMsg('user',msg);
+chatHistory.push({role:'user',content:msg});
+// 添加AI占位
+const aiDiv=appendChatMsg('assistant','');
+aiDiv.querySelector('.role').textContent='AI 正在思考...';
+document.getElementById('chatSendBtn').disabled=true;
+try{
+const p=allProvidersCache.find(x=>x.id===pid);
+const format=p?p.format:'openai';
+const url=p.baseUrl.replace(/\/+$/,'')+(format==='anthropic'?'/messages':'/chat/completions');
+const body=buildChatBody(format,model,apiKey,chatHistory,true);
+const res=await fetch(url,{method:'POST',headers:buildChatHeaders(format,apiKey,p),body:JSON.stringify(body)});
+if(!res.ok){
+const errText=await res.text();
+aiDiv.className='chat-msg error';
+aiDiv.innerHTML='<div class="role">错误</div>HTTP '+res.status+': '+errText;
+chatHistory.pop();
+return;
+}
+// 流式读取
+const reader=res.body.getReader();
+const decoder=new TextDecoder();
+let fullContent='';
+let buffer='';
+while(true){
+const{done,value}=await reader.read();
+if(done)break;
+buffer+=decoder.decode(value,{stream:true});
+const lines=buffer.split('\n');
+buffer=lines.pop()||'';
+for(const line of lines){
+const trimmed=line.trim();
+if(!trimmed||!trimmed.startsWith('data:'))continue;
+const data=trimmed.slice(5).trim();
+if(data==='[DONE]')continue;
+try{
+const json=JSON.parse(data);
+const delta=extractDelta(format,json);
+if(delta){
+fullContent+=delta;
+aiDiv.innerHTML='<div class="role">AI</div>'+esc(fullContent);
+document.getElementById('chatMessages').scrollTop=document.getElementById('chatMessages').scrollHeight;
+}
+}catch(e){}
+}
+}
+if(!fullContent){
+// 非流式响应
+const json=await res.json();
+fullContent=extractDelta(format,json)||'(空回复)';
+aiDiv.innerHTML='<div class="role">AI</div>'+esc(fullContent);
+}
+chatHistory.push({role:'assistant',content:fullContent});
+}catch(e){
+aiDiv.className='chat-msg error';
+aiDiv.innerHTML='<div class="role">错误</div>'+esc(e.message);
+chatHistory.pop();
+}finally{
+document.getElementById('chatSendBtn').disabled=false;
+}
+}
+
+function buildChatBody(format,model,apiKey,history,stream){
+const msgs=history.map(m=>({role:m.role,content:m.content}));
+if(format==='anthropic'){
+return{model:model,messages:msgs,max_tokens:4096,stream:stream};
+}
+return{model:model,messages:msgs,stream:stream};
+}
+
+function buildChatHeaders(format,apiKey,p){
+const headers={'Content-Type':'application/json'};
+if(format==='anthropic'){
+headers['x-api-key']=apiKey;
+headers['anthropic-version']='2023-06-01';
+}else{
+headers['Authorization']='Bearer '+apiKey;
+}
+// 应用自定义请求头
+if(p&&p.customHeaders){
+for(const[k,v]of Object.entries(p.customHeaders)){headers[k]=v;}
+}
+return headers;
+}
+
+function extractDelta(format,json){
+if(format==='anthropic'){
+// 流式
+if(json.type==='content_block_delta'&&json.delta&&json.delta.text)return json.delta.text;
+// 非流式
+if(json.content&&json.content[0]&&json.content[0].text)return json.content[0].text;
+return'';
+}
+// OpenAI 流式
+if(json.choices&&json.choices[0]&&json.choices[0].delta&&json.choices[0].delta.content)return json.choices[0].delta.content;
+// OpenAI 非流式
+if(json.choices&&json.choices[0]&&json.choices[0].message&&json.choices[0].message.content)return json.choices[0].message.content;
+return'';
 }
 
 // --- 模型标签输入 ---
