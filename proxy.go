@@ -220,10 +220,11 @@ func handleStreamProxy(w http.ResponseWriter, resp *http.Response, clientFormat,
 	}
 
 	if clientFormat == providerFormat {
-		// 直通流式响应
+		// 直通流式响应，同时收集用量
 		w.Header().Set("Content-Type", "text/event-stream")
 		w.WriteHeader(http.StatusOK)
 		reader := bufio.NewReader(resp.Body)
+		var totalInput, totalOutput int
 		for {
 			line, err := reader.ReadString('\n')
 			if err != nil {
@@ -235,8 +236,45 @@ func handleStreamProxy(w http.ResponseWriter, resp *http.Response, clientFormat,
 			}
 			w.Write([]byte(line))
 			flusher.Flush()
+			// 尝试从 data: 行提取用量
+			trimmed := strings.TrimRight(line, "\r\n")
+			if strings.HasPrefix(trimmed, "data: ") {
+				payload := strings.TrimSpace(trimmed[6:])
+				if payload != "" && payload != "[DONE]" {
+					var obj map[string]any
+					if json.Unmarshal([]byte(payload), &obj) == nil {
+						if u, ok := obj["usage"].(map[string]any); ok {
+							if pt, ok := u["prompt_tokens"].(float64); ok {
+								totalInput = int(pt)
+							}
+							if ct, ok := u["completion_tokens"].(float64); ok {
+								totalOutput = int(ct)
+							}
+						}
+						// Anthropic 流式用量
+						if obj["type"] == "message_start" {
+							if msg, ok := obj["message"].(map[string]any); ok {
+								if u, ok := msg["usage"].(map[string]any); ok {
+									if it, ok := u["input_tokens"].(float64); ok {
+										totalInput = int(it)
+									}
+								}
+							}
+						}
+						if obj["type"] == "message_delta" {
+							if u, ok := obj["usage"].(map[string]any); ok {
+								if ot, ok := u["output_tokens"].(float64); ok {
+									totalOutput = int(ot)
+								}
+							}
+						}
+					}
+				}
+			}
 		}
-		// 从流中提取用量（尽力而为）
+		// 记录用量
+		logEntry := newUsageLog(provider.ID, provider.Name, model, totalInput, totalOutput, clientFormat)
+		addUsageLog(logEntry)
 		return
 	}
 

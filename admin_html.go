@@ -191,12 +191,16 @@ tr:hover{background:var(--hover)}
 </div>
 <div class="form-row">
 <div class="form-group">
-<label>输入预算预设 (逗号分隔)</label>
-<input class="input" id="settingInputPresets" placeholder="32K, 64K, 128K, 256K, 1M">
+<label>输入预算预设 (回车添加，或逗号分隔添加多个)</label>
+<div class="tag-input-wrap" id="inputPresetsWrap">
+<input class="tag-input" id="inputPresetInput" placeholder="如: 32K" oninput="this.value=this.value.trim()" onkeydown="handlePresetKeydown(event,'input')">
+</div>
 </div>
 <div class="form-group">
-<label>输出预算预设 (逗号分隔)</label>
-<input class="input" id="settingOutputPresets" placeholder="8K, 16K, 32K, 64K, 128K">
+<label>输出预算预设 (回车添加，或逗号分隔添加多个)</label>
+<div class="tag-input-wrap" id="outputPresetsWrap">
+<input class="tag-input" id="outputPresetInput" placeholder="如: 8K" oninput="this.value=this.value.trim()" onkeydown="handlePresetKeydown(event,'output')">
+</div>
 </div>
 </div>
 <button class="btn btn-primary" onclick="saveSettings()">保存设置</button>
@@ -301,8 +305,13 @@ tr:hover{background:var(--hover)}
 </div>
 </div>
 <div class="form-group">
-<label>自定义请求头 (每行一个，格式: Key: Value)</label>
-<textarea class="input" id="provHeaders" rows="3" placeholder="X-DashScope-Wait-Timeout: 30&#10;X-Custom-Header: value"></textarea>
+<label>自定义请求头</label>
+<div id="provHeadersList" style="margin-bottom:6px"></div>
+<div style="display:flex;gap:8px">
+<input class="input" id="provHeaderKey" placeholder="Header Key" style="flex:1" onkeydown="handleHeaderKeydown(event)">
+<input class="input" id="provHeaderVal" placeholder="Header Value" style="flex:1" onkeydown="handleHeaderKeydown(event)">
+<button class="btn btn-outline" onclick="addProvHeader()">添加</button>
+</div>
 </div>
 <div class="form-group">
 <button class="btn btn-outline" onclick="testProvider()" id="testBtn">测试连接</button>
@@ -713,7 +722,7 @@ content.innerHTML='<div class="empty"><span class="loading"></span> 正在测试
 try{
 const res=await fetch(API+'/test',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({
 baseUrl:baseUrl,apiKey:k.key,format:format,model:model,
-customHeaders:parseCustomHeaders(document.getElementById('provHeaders').value)
+customHeaders:{...editingHeaders}
 })});
 const data=await res.json();
 let html='<div style="margin-bottom:12px">';
@@ -889,7 +898,8 @@ document.getElementById('provKeyInput').value='';
 document.getElementById('provKeyName').value='';
 editingKeys=[];
 renderKeyList();
-document.getElementById('provHeaders').value='';
+editingHeaders={};
+renderHeaderList();
 editingModels=[];
 renderModelTags();
 document.getElementById('testResult').innerHTML='';
@@ -909,11 +919,8 @@ document.getElementById('provBaseUrl').value=p.baseUrl;
 editingKeys=(p.apiKeys||[]).map(k=>({...k}));
 renderKeyList();
 // 加载自定义请求头
-let hdrText='';
-if(p.customHeaders){
-for(const[k,v]of Object.entries(p.customHeaders)){hdrText+=k+': '+v+'\n';}
-}
-document.getElementById('provHeaders').value=hdrText.trim();
+editingHeaders={...((p.customHeaders)||{})};
+renderHeaderList();
 editingModels=[...(p.models||[])];
 renderModelTags();
 document.getElementById('testResult').innerHTML='';
@@ -925,8 +932,8 @@ const id=document.getElementById('provId').value;
 // 合并输入框中未提交的内容
 const inputVal=document.getElementById('provModelInput').value;
 if(inputVal.trim())addModelTag(inputVal);
-// 解析自定义请求头
-const customHeaders=parseCustomHeaders(document.getElementById('provHeaders').value);
+// 自定义请求头
+const customHeaders={...editingHeaders};
 const body={
 name:document.getElementById('provName').value,
 format:document.getElementById('provFormat').value,
@@ -982,7 +989,7 @@ baseUrl:document.getElementById('provBaseUrl').value,
 apiKey:editingKeys.length>0?editingKeys[0].key:'',
 format:document.getElementById('provFormat').value,
 model:editingModels[0]||'gpt-4o-mini',
-customHeaders:parseCustomHeaders(document.getElementById('provHeaders').value)
+customHeaders:{...editingHeaders}
 };
 if(!body.baseUrl||!body.apiKey){
 result.innerHTML='<div class="test-error">请填写 Base URL 和至少一个 API Key</div>';
@@ -1003,22 +1010,59 @@ btn.innerHTML='测试连接';
 btn.disabled=false;
 }
 
-// 解析自定义请求头文本为对象
-function parseCustomHeaders(text){
-const headers={};
-if(!text||!text.trim())return headers;
-const lines=text.split('\n');
-for(const line of lines){
-const trimmed=line.trim();
-if(!trimmed)continue;
-const idx=trimmed.indexOf(':');
-if(idx>0){
-const key=trimmed.substring(0,idx).trim();
-const val=trimmed.substring(idx+1).trim();
-if(key)headers[key]=val;
+// --- 自定义请求头编辑器 ---
+let editingHeaders={};
+
+function renderHeaderList(){
+const el=document.getElementById('provHeadersList');
+el.innerHTML='';
+const keys=Object.keys(editingHeaders);
+if(keys.length===0){
+el.innerHTML='<div style="color:var(--muted);font-size:12px;padding:4px 0">暂无自定义请求头</div>';
+return;
 }
+keys.forEach(k=>{
+const item=document.createElement('div');
+item.className='key-item';
+item.innerHTML='<input class="input" value="'+esc(k)+'" style="flex:1;font-size:12px;padding:4px 8px" onchange="renameProvHeader(\''+esc(k)+'\',this.value)" placeholder="Key">';
+item.innerHTML+='<input class="input" value="'+esc(editingHeaders[k])+'" style="flex:1;font-size:12px;padding:4px 8px" onchange="updateProvHeaderVal(\''+esc(k)+'\',this.value)" placeholder="Value">';
+item.innerHTML+='<button class="key-x" onclick="removeProvHeader(\''+esc(k)+'\')" title="删除">×</button>';
+el.appendChild(item);
+});
 }
-return headers;
+
+function addProvHeader(){
+const keyInput=document.getElementById('provHeaderKey');
+const valInput=document.getElementById('provHeaderVal');
+const key=keyInput.value.trim();
+if(!key){toast('请输入 Header Key','error');return;}
+editingHeaders[key]=valInput.value.trim();
+keyInput.value='';
+valInput.value='';
+renderHeaderList();
+keyInput.focus();
+}
+
+function removeProvHeader(key){
+delete editingHeaders[key];
+renderHeaderList();
+}
+
+function renameProvHeader(oldKey,newKey){
+newKey=newKey.trim();
+if(!newKey||newKey===oldKey)return;
+const val=editingHeaders[oldKey];
+delete editingHeaders[oldKey];
+editingHeaders[newKey]=val;
+renderHeaderList();
+}
+
+function updateProvHeaderVal(key,val){
+editingHeaders[key]=val;
+}
+
+function handleHeaderKeydown(e){
+if(e.key==='Enter'){e.preventDefault();addProvHeader();}
 }
 
 // 按站点+模型测试（真实对话）
@@ -1324,20 +1368,56 @@ sel.innerHTML+='<option value="'+esc(p)+'"'+s+'>'+esc(p)+'</option>';
 }
 }
 
-// 渲染设置页的预设编辑器
+// 渲染设置页的预设标签
 function renderPresetEditors(){
-document.getElementById('settingInputPresets').value=inputPresets.join(', ');
-document.getElementById('settingOutputPresets').value=outputPresets.join(', ');
+renderPresetTags('inputPresetsWrap','inputPresetInput',inputPresets);
+renderPresetTags('outputPresetsWrap','outputPresetInput',outputPresets);
+}
+
+function renderPresetTags(wrapId,inputId,arr){
+const wrap=document.getElementById(wrapId);
+const input=document.getElementById(inputId);
+// 清除旧 tag（保留 input）
+const tags=wrap.querySelectorAll('.tag');
+tags.forEach(t=>t.remove());
+arr.forEach((v,i)=>{
+const tag=document.createElement('span');
+tag.className='tag';
+tag.innerHTML=esc(v)+'<button class="tag-x" onclick="removePresetTag(\''+wrapId+'\','+i+',\''+inputId+'\')">×</button>';
+wrap.insertBefore(tag,input);
+});
+}
+
+function removePresetTag(wrapId,index,inputId){
+const isInput=wrapId==='inputPresetsWrap';
+if(isInput)inputPresets.splice(index,1);
+else outputPresets.splice(index,1);
+renderPresetEditors();
+}
+
+function handlePresetKeydown(e,type){
+if(e.key==='Enter'||e.key===','){
+e.preventDefault();
+const inputId=type==='input'?'inputPresetInput':'outputPresetInput';
+const val=document.getElementById(inputId).value.trim().replace(/,$/,'');
+if(val){
+if(type==='input'&&!inputPresets.includes(val))inputPresets.push(val);
+if(type==='output'&&!outputPresets.includes(val))outputPresets.push(val);
+document.getElementById(inputId).value='';
+renderPresetEditors();
+}
+}
 }
 
 async function saveSettings(){
 const model=document.getElementById('settingDefaultModel').value;
-const ip=document.getElementById('settingInputPresets').value.split(',').map(s=>s.trim()).filter(s=>s);
-const op=document.getElementById('settingOutputPresets').value.split(',').map(s=>s.trim()).filter(s=>s);
-const res=await fetch(API+'/settings',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({defaultModel:model,activeProviderId:activeProviderId,inputPresets:ip,outputPresets:op})});
+// 合并输入框中未提交的内容
+const ipVal=document.getElementById('inputPresetInput').value.trim();
+if(ipVal&&!inputPresets.includes(ipVal))inputPresets.push(ipVal);
+const opVal=document.getElementById('outputPresetInput').value.trim();
+if(opVal&&!outputPresets.includes(opVal))outputPresets.push(opVal);
+const res=await fetch(API+'/settings',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({defaultModel:model,activeProviderId:activeProviderId,inputPresets:inputPresets,outputPresets:outputPresets})});
 if(res.ok){
-if(ip.length)inputPresets=ip;
-if(op.length)outputPresets=op;
 toast('已保存','success');
 }
 }
