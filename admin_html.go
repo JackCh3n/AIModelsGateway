@@ -359,8 +359,12 @@ tr:hover{background:var(--hover)}
 <div class="modal">
 <div class="modal-title" id="globalMcTitle">添加模型上下文配置</div>
 <div class="form-group">
-<label>模型名</label>
-<input class="input" id="gmcModel" placeholder="如: deepseek-v4-flash" oninput="this.value=this.value.trim()">
+<label>站点</label>
+<select class="select" id="gmcProvider" onchange="onGmcProviderChange()"></select>
+</div>
+<div class="form-group">
+<label>模型</label>
+<select class="select" id="gmcModel"></select>
 </div>
 <div class="form-row">
 <div class="form-group">
@@ -372,11 +376,7 @@ tr:hover{background:var(--hover)}
 <select class="select" id="gmcOutputLimit"></select>
 </div>
 </div>
-<div class="form-group">
-<label>应用到哪些站点</label>
-<p style="color:var(--muted);font-size:12px;margin-bottom:8px">勾选要将此配置应用到的站点（模型需在站点中存在）</p>
-<div id="gmcProviders" style="max-height:200px;overflow-y:auto"></div>
-</div>
+<p style="color:var(--muted);font-size:12px;margin-bottom:12px">配置后网关会覆盖请求中的 max_tokens 为输出预算值。留空则不干预，走客户端传的值。</p>
 <div class="modal-actions">
 <button class="btn btn-outline" onclick="closeModal('globalModelConfigModal')">取消</button>
 <button class="btn btn-primary" onclick="saveGlobalModelConfig()">保存</button>
@@ -1348,28 +1348,25 @@ const res=await fetch(API+'/providers');
 const providers=await res.json();
 allProvidersCache=providers||[];
 const el=document.getElementById('globalModelConfigList');
-// 汇总所有站点的模型配置，按模型名分组
-const configMap={};
+// 列出所有站点+模型的配置（站点+模型为唯一键）
+let rows=[];
 for(const p of providers||[]){
 for(const mc of(p.modelConfigs||[])){
-if(!configMap[mc.model])configMap[mc.model]={model:mc.model,inputLimit:mc.inputLimit,outputLimit:mc.outputLimit,providers:[]};
-configMap[mc.model].providers.push({id:p.id,name:p.name});
+rows.push({providerId:p.id,providerName:p.name,model:mc.model,inputLimit:mc.inputLimit,outputLimit:mc.outputLimit});
 }
 }
-const models=Object.keys(configMap);
-if(models.length===0){
+if(rows.length===0){
 el.innerHTML='<div class="empty">暂无配置，点击右上角添加</div>';
 return;
 }
-let html='<table><tr><th>模型</th><th>输入预算</th><th>输出预算</th><th>应用站点</th><th>操作</th></tr>';
-for(const model of models){
-const c=configMap[model];
+let html='<table><tr><th>站点</th><th>模型</th><th>输入预算</th><th>输出预算</th><th>操作</th></tr>';
+for(const r of rows){
 html+='<tr>';
-html+='<td class="mono">'+esc(model)+'</td>';
-html+='<td>'+(c.inputLimit||'-')+'</td>';
-html+='<td>'+(c.outputLimit||'-')+'</td>';
-html+='<td style="font-size:12px">'+c.providers.map(p=>esc(p.name)).join('<br>')+'</td>';
-html+='<td><button class="btn btn-sm btn-outline" onclick="editGlobalModelConfig(\''+esc(model)+'\')">编辑</button> <button class="btn btn-sm btn-danger" onclick="deleteGlobalModelConfig(\''+esc(model)+'\')">删除</button></td>';
+html+='<td>'+esc(r.providerName)+'</td>';
+html+='<td class="mono">'+esc(r.model)+'</td>';
+html+='<td>'+(r.inputLimit||'-')+'</td>';
+html+='<td>'+(r.outputLimit||'-')+'</td>';
+html+='<td><button class="btn btn-sm btn-outline" onclick="editGlobalModelConfig(\''+r.providerId+'\',\''+esc(r.model)+'\')">编辑</button> <button class="btn btn-sm btn-danger" onclick="deleteGlobalModelConfig(\''+r.providerId+'\',\''+esc(r.model)+'\')">删除</button></td>';
 html+='</tr>';
 }
 html+='</table>';
@@ -1378,77 +1375,81 @@ el.innerHTML=html;
 
 function showGlobalModelConfigModal(){
 document.getElementById('globalMcTitle').textContent='添加模型上下文配置';
-document.getElementById('gmcModel').value='';
-document.getElementById('gmcModel').disabled=false;
+// 填充站点下拉
+const provSel=document.getElementById('gmcProvider');
+provSel.innerHTML='';
+for(const p of allProvidersCache){
+provSel.innerHTML+='<option value="'+p.id+'">'+esc(p.name)+' ('+p.format+')</option>';
+}
+onGmcProviderChange();
 fillPresetSelect('gmcInputLimit','',inputPresets);
 fillPresetSelect('gmcOutputLimit','',outputPresets);
-renderGmcProviders([]);
 document.getElementById('globalModelConfigModal').classList.add('show');
 }
 
-function editGlobalModelConfig(model){
+function onGmcProviderChange(){
+const pid=document.getElementById('gmcProvider').value;
+const p=allProvidersCache.find(x=>x.id===pid);
+const modelSel=document.getElementById('gmcModel');
+modelSel.innerHTML='';
+if(!p)return;
+const disabledSet=new Set(p.disabledModels||[]);
+for(const m of(p.models||[])){
+if(!disabledSet.has(m))modelSel.innerHTML+='<option value="'+esc(m)+'">'+esc(m)+'</option>';
+}
+}
+
+function editGlobalModelConfig(providerId,model){
 document.getElementById('globalMcTitle').textContent='编辑模型上下文配置';
-document.getElementById('gmcModel').value=model;
-document.getElementById('gmcModel').disabled=true;
-// 找到该模型的配置
-let inputLimit='',outputLimit='',providerIds=[];
+// 填充站点下拉并选中
+const provSel=document.getElementById('gmcProvider');
+provSel.innerHTML='';
 for(const p of allProvidersCache){
-const mc=(p.modelConfigs||[]).find(c=>c.model===model);
-if(mc){
-inputLimit=mc.inputLimit||'';
-outputLimit=mc.outputLimit||'';
-providerIds.push(p.id);
+const s=(p.id===providerId)?' selected':'';
+provSel.innerHTML+='<option value="'+p.id+'"'+s+'>'+esc(p.name)+' ('+p.format+')</option>';
 }
+onGmcProviderChange();
+// 选中模型
+const modelSel=document.getElementById('gmcModel');
+for(const opt of modelSel.options){
+if(opt.value===model){opt.selected=true;break;}
 }
-fillPresetSelect('gmcInputLimit',inputLimit,inputPresets);
-fillPresetSelect('gmcOutputLimit',outputLimit,outputPresets);
-renderGmcProviders(providerIds);
+// 填充已有配置
+const p=allProvidersCache.find(x=>x.id===providerId);
+const mc=p?(p.modelConfigs||[]).find(c=>c.model===model):null;
+fillPresetSelect('gmcInputLimit',mc?mc.inputLimit:'',inputPresets);
+fillPresetSelect('gmcOutputLimit',mc?mc.outputLimit:'',outputPresets);
 document.getElementById('globalModelConfigModal').classList.add('show');
-}
-
-function renderGmcProviders(selectedIds){
-const el=document.getElementById('gmcProviders');
-el.innerHTML='';
-const selSet=new Set(selectedIds);
-for(const p of allProvidersCache){
-const checked=selSet.has(p.id)?' checked':'';
-el.innerHTML+='<div style="padding:4px 0"><label style="display:flex;align-items:center;gap:6px;cursor:pointer"><input type="checkbox" value="'+p.id+'"'+checked+'> <span>'+esc(p.name)+' ('+p.format+')</span></label></div>';
-}
 }
 
 async function saveGlobalModelConfig(){
-const model=document.getElementById('gmcModel').value.trim();
-if(!model){toast('请输入模型名','error');return;}
+const providerId=document.getElementById('gmcProvider').value;
+const model=document.getElementById('gmcModel').value;
+if(!providerId||!model){toast('请选择站点和模型','error');return;}
 const inputLimit=document.getElementById('gmcInputLimit').value;
 const outputLimit=document.getElementById('gmcOutputLimit').value;
-const checked=Array.from(document.querySelectorAll('#gmcProviders input[type=checkbox]:checked')).map(c=>c.value);
-if(checked.length===0){toast('请至少选择一个站点','error');return;}
 const body={model:model,inputLimit:inputLimit,outputLimit:outputLimit};
-// 对每个选中的站点调用配置 API
-let okCount=0;
-for(const pid of checked){
-const url=API+'/providers/models/config/'+pid+'?model='+encodeURIComponent(model);
+const url=API+'/providers/models/config/'+providerId+'?model='+encodeURIComponent(model);
 const res=await fetch(url,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
-if(res.ok)okCount++;
-}
+if(res.ok){
 closeModal('globalModelConfigModal');
-toast('已保存到 '+okCount+' 个站点','success');
+toast('已保存','success');
 loadGlobalModelConfigs();
+}else{
+toast('保存失败','error');
+}
 }
 
-async function deleteGlobalModelConfig(model){
+async function deleteGlobalModelConfig(providerId,model){
 if(!confirm('确定删除 '+model+' 的上下文配置？'))return;
-// 从所有有该配置的站点删除（设为空）
-for(const p of allProvidersCache){
-const mc=(p.modelConfigs||[]).find(c=>c.model===model);
-if(mc){
-// 通过设置空配置来"删除"
-const url=API+'/providers/models/config/'+p.id+'?model='+encodeURIComponent(model);
-await fetch(url,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({model:model,inputLimit:'',outputLimit:''})});
-}
-}
+const url=API+'/providers/models/config/'+providerId+'?model='+encodeURIComponent(model);
+const res=await fetch(url,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({model:model,inputLimit:'',outputLimit:''})});
+if(res.ok){
 toast('已删除','success');
 loadGlobalModelConfigs();
+}else{
+toast('删除失败','error');
+}
 }
 
 // --- Config ---
