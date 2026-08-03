@@ -251,7 +251,7 @@ tr:hover{background:var(--hover)}
 <label>API Keys (多Key轮询)</label>
 <div id="provKeysList" style="margin-bottom:8px"></div>
 <div style="display:flex;gap:8px">
-<input class="input" id="provKeyInput" placeholder="sk-..." type="password" style="flex:1" onkeydown="handleKeyKeydown(event)">
+<input class="input" id="provKeyInput" placeholder="sk-..." style="flex:1" onkeydown="handleKeyKeydown(event)">
 <input class="input" id="provKeyName" placeholder="备注(可选)" style="width:120px">
 <button class="btn btn-outline" onclick="addProvKey()">添加</button>
 </div>
@@ -411,13 +411,18 @@ if(editingKeys.length===0){
 el.innerHTML='<div style="color:var(--muted);font-size:12px;padding:4px 0">暂无 Key，请在下方添加</div>';
 return;
 }
+const baseUrl=document.getElementById('provBaseUrl').value;
+const format=document.getElementById('provFormat').value;
+const firstModel=editingModels[0]||'gpt-4o-mini';
 editingKeys.forEach((k,i)=>{
 const item=document.createElement('div');
 item.className='key-item';
-const masked=k.key.substring(0,8)+'...'+k.key.substring(k.key.length-4);
-let html='<span class="key-val" title="'+esc(k.key)+'">'+esc(masked)+'</span>';
+const isActive=(k.status||'active')==='active';
+let html='<span class="key-val" title="'+esc(k.key)+'">'+esc(k.key)+'</span>';
 if(k.name)html+='<span class="key-name">'+esc(k.name)+'</span>';
 html+='<span class="badge badge-'+(k.status||'active')+'">'+(k.status||'active')+'</span>';
+html+='<button class="copy-btn" onclick="toggleProvKey('+i+')" title="'+(isActive?'禁用':'启用')+'">'+(isActive?'⏸️':'▶️')+'</button>';
+html+='<button class="copy-btn" onclick="testProvKey('+i+')">测试</button>';
 html+='<button class="key-x" onclick="removeProvKey('+i+')" title="删除">×</button>';
 item.innerHTML=html;
 el.appendChild(item);
@@ -438,8 +443,58 @@ function removeProvKey(i){
 editingKeys.splice(i,1);
 renderKeyList();
 }
+function toggleProvKey(i){
+const k=editingKeys[i];
+k.status=(k.status||'active')==='active'?'disabled':'active';
+renderKeyList();
+}
 function handleKeyKeydown(e){
 if(e.key==='Enter'){e.preventDefault();addProvKey();}
+}
+
+// 测试单个 Key
+async function testProvKey(i){
+const k=editingKeys[i];
+const baseUrl=document.getElementById('provBaseUrl').value;
+const format=document.getElementById('provFormat').value;
+const model=editingModels[0]||'gpt-4o-mini';
+if(!baseUrl||!k.key){toast('请先填写 Base URL 和 Key','error');return;}
+const modal=document.getElementById('modelTestModal');
+const content=document.getElementById('modelTestContent');
+modal.classList.add('show');
+content.innerHTML='<div class="empty"><span class="loading"></span> 正在测试 Key '+esc(k.key.substring(0,8)+'...')+' ...</div>';
+try{
+const res=await fetch(API+'/test',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({
+baseUrl:baseUrl,apiKey:k.key,format:format,model:model,
+customHeaders:parseCustomHeaders(document.getElementById('provHeaders').value)
+})});
+const data=await res.json();
+let html='<div style="margin-bottom:12px">';
+html+='<div style="font-size:13px;color:var(--muted);margin-bottom:4px">测试 Key</div>';
+html+='<div class="mono" style="margin-bottom:4px;word-break:break-all">'+esc(k.key)+'</div>';
+if(k.name){html+='<div style="font-size:12px;color:var(--muted);margin-bottom:4px">备注: '+esc(k.name)+'</div>';}
+html+='<div style="font-size:13px;color:var(--muted);margin-bottom:4px">测试模型</div>';
+html+='<div class="mono" style="margin-bottom:8px">'+esc(model)+'</div>';
+html+='<div style="font-size:13px;color:var(--muted);margin-bottom:4px">请求地址</div>';
+html+='<div class="mono" style="margin-bottom:8px;font-size:12px;word-break:break-all">'+esc(data.testUrl||'-')+'</div>';
+html+='<div style="font-size:13px;color:var(--muted);margin-bottom:4px">发送消息</div>';
+html+='<div class="mono" style="margin-bottom:8px;padding:8px;background:var(--bg);border-radius:4px">'+esc(data.testMessage||'-')+'</div>';
+html+='</div>';
+if(data.success){
+html+='<div class="test-success" style="margin-bottom:8px"><strong>Key 可用</strong> (HTTP '+data.status+')</div>';
+html+='<div style="font-size:13px;color:var(--muted);margin-bottom:4px">AI 回复</div>';
+html+='<div class="test-success" style="padding:12px;margin-bottom:8px">'+esc(data.content||'(空)')+'</div>';
+}else{
+html+='<div class="test-error" style="margin-bottom:8px"><strong>Key 不可用</strong> (HTTP '+data.status+')</div>';
+html+='<div class="test-error" style="padding:12px;margin-bottom:8px">'+esc(data.error||'未知错误')+'</div>';
+}
+if(data.raw){
+html+='<details style="margin-top:8px"><summary style="cursor:pointer;font-size:12px;color:var(--muted)">原始响应</summary><pre class="mono" style="font-size:11px;padding:8px;background:var(--bg);border-radius:4px;overflow-x:auto;margin-top:4px;white-space:pre-wrap">'+esc(data.raw)+'</pre></details>';
+}
+content.innerHTML=html;
+}catch(e){
+content.innerHTML='<div class="test-error">请求失败: '+esc(e.message)+'</div>';
+}
 }
 
 // --- Providers ---
