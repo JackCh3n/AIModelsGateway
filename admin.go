@@ -40,6 +40,9 @@ func registerAdminRoutes(mux *http.ServeMux) {
 		if p.DisabledModels == nil {
 			p.DisabledModels = []string{}
 		}
+		if p.CustomHeaders == nil {
+			p.CustomHeaders = map[string]string{}
+		}
 		addProvider(p)
 			writeJSON(w, http.StatusOK, p)
 		default:
@@ -195,17 +198,43 @@ func registerAdminRoutes(mux *http.ServeMux) {
 			return
 		}
 		var req struct {
-			BaseURL string `json:"baseUrl"`
-			APIKey  string `json:"apiKey"`
-			Format  string `json:"format"`
-			Model   string `json:"model"`
+			BaseURL       string            `json:"baseUrl"`
+			APIKey        string            `json:"apiKey"`
+			Format        string            `json:"format"`
+			Model         string            `json:"model"`
+			CustomHeaders map[string]string `json:"customHeaders"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 			return
 		}
 
-		result := testProvider(req.BaseURL, req.APIKey, req.Format, req.Model)
+		result := testProvider(req.BaseURL, req.APIKey, req.Format, req.Model, req.CustomHeaders)
+		writeJSON(w, http.StatusOK, result)
+	}))
+
+	// 按 provider+model 测试（从已保存的站点配置读取）
+	mux.HandleFunc("/admin/api/providers/test/", corsHandler(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != "POST" {
+			writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "POST required"})
+			return
+		}
+		path := strings.TrimPrefix(r.URL.Path, "/admin/api/providers/test/")
+		parts := strings.SplitN(path, "/", 2)
+		if len(parts) < 1 || parts[0] == "" {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "provider id required"})
+			return
+		}
+		p := getProvider(parts[0])
+		if p == nil {
+			writeJSON(w, http.StatusNotFound, map[string]string{"error": "provider not found"})
+			return
+		}
+		model := r.URL.Query().Get("model")
+		if model == "" {
+			model = getSettings().DefaultModel
+		}
+		result := testProvider(p.BaseURL, p.APIKey, p.Format, model, p.CustomHeaders)
 		writeJSON(w, http.StatusOK, result)
 	}))
 
@@ -302,11 +331,13 @@ func registerAdminRoutes(mux *http.ServeMux) {
 	}))
 }
 
-// testProvider 测试中转站 key 和模型可用性
-func testProvider(baseURL, apiKey, format, model string) map[string]any {
+// testProvider 测试中转站 key 和模型可用性（真实对话测试）
+func testProvider(baseURL, apiKey, format, model string, customHeaders map[string]string) map[string]any {
 	if model == "" {
 		model = "gpt-4o-mini"
 	}
+
+	testMessage := "Hi, reply with just 'ok'"
 
 	var reqBody map[string]any
 	var upstreamURL string
@@ -317,7 +348,7 @@ func testProvider(baseURL, apiKey, format, model string) map[string]any {
 		reqBody = map[string]any{
 			"model":      model,
 			"max_tokens": 100,
-			"messages":   []any{map[string]any{"role": "user", "content": "Hi, reply with just 'ok'"}},
+			"messages":   []any{map[string]any{"role": "user", "content": testMessage}},
 		}
 		headers = map[string]string{
 			"Content-Type":      "application/json",
@@ -329,13 +360,18 @@ func testProvider(baseURL, apiKey, format, model string) map[string]any {
 		reqBody = map[string]any{
 			"model":       model,
 			"max_tokens":  100,
-			"messages":    []any{map[string]any{"role": "user", "content": "Hi, reply with just 'ok'"}},
+			"messages":    []any{map[string]any{"role": "user", "content": testMessage}},
 			"temperature": 0,
 		}
 		headers = map[string]string{
 			"Content-Type":  "application/json",
 			"Authorization": "Bearer " + apiKey,
 		}
+	}
+
+	// 合并自定义请求头（覆盖同名默认头）
+	for k, v := range customHeaders {
+		headers[k] = v
 	}
 
 	bodyJSON, _ := json.Marshal(reqBody)
@@ -355,9 +391,12 @@ func testProvider(baseURL, apiKey, format, model string) map[string]any {
 
 	if resp.StatusCode != 200 {
 		return map[string]any{
-			"success": false,
-			"status":  resp.StatusCode,
-			"error":   truncate(respStr, 500),
+			"success":     false,
+			"status":      resp.StatusCode,
+			"error":       truncate(respStr, 500),
+			"testUrl":     upstreamURL,
+			"testMessage": testMessage,
+			"reqHeaders":  headers,
 		}
 	}
 
@@ -381,10 +420,13 @@ func testProvider(baseURL, apiKey, format, model string) map[string]any {
 	log.Printf("  test: %s %s -> %d content=%s", baseURL, model, resp.StatusCode, truncate(content, 50))
 
 	return map[string]any{
-		"success": true,
-		"status":  resp.StatusCode,
-		"content": truncate(content, 200),
-		"raw":     truncate(respStr, 500),
+		"success":     true,
+		"status":      resp.StatusCode,
+		"content":     truncate(content, 200),
+		"raw":         truncate(respStr, 500),
+		"testUrl":     upstreamURL,
+		"testMessage": testMessage,
+		"reqHeaders":  headers,
 	}
 }
 

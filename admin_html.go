@@ -254,12 +254,27 @@ tr:hover{background:var(--hover)}
 </div>
 </div>
 <div class="form-group">
+<label>自定义请求头 (每行一个，格式: Key: Value)</label>
+<textarea class="input" id="provHeaders" rows="3" placeholder="X-DashScope-Wait-Timeout: 30&#10;X-Custom-Header: value"></textarea>
+</div>
+<div class="form-group">
 <button class="btn btn-outline" onclick="testProvider()" id="testBtn">测试连接</button>
 <div id="testResult"></div>
 </div>
 <div class="modal-actions">
 <button class="btn btn-outline" onclick="closeModal('providerModal')">取消</button>
 <button class="btn btn-primary" onclick="saveProvider()">保存</button>
+</div>
+</div>
+</div>
+
+<!-- Model Test Modal -->
+<div class="modal-overlay" id="modelTestModal">
+<div class="modal">
+<div class="modal-title">模型对话测试</div>
+<div id="modelTestContent"><div class="empty">测试中...</div></div>
+<div class="modal-actions">
+<button class="btn btn-outline" onclick="closeModal('modelTestModal')">关闭</button>
 </div>
 </div>
 </div>
@@ -421,7 +436,7 @@ const modelUrl=getModelUrl(p,m);
 html+='<span class="model-chip'+(enabled?'':' disabled')+'">';
 html+='<button class="chip-toggle" onclick="toggleModel(\''+p.id+'\',\''+esc(m)+'\')" title="'+(enabled?'点击禁用':'点击启用')+'">'+(enabled?'✅':'⏸️')+'</button> ';
 html+=esc(m);
-html+=' <span class="url-hint" style="display:block">'+modelUrl+' <button class="copy-btn" onclick="copyText(\''+esc(modelUrl)+'\',this)">复制</button></span>';
+html+=' <span class="url-hint" style="display:block">'+modelUrl+' <button class="copy-btn" onclick="copyText(\''+esc(modelUrl)+'\',this)">复制</button> <button class="copy-btn" onclick="testModel(\''+p.id+'\',\''+esc(m)+'\')">测试</button></span>';
 html+='</span>';
 }
 if(!p.models||p.models.length===0)html+='<span class="empty" style="padding:8px">暂无模型</span>';
@@ -470,6 +485,7 @@ document.getElementById('provFormat').value='openai';
 document.getElementById('provStatus').value='active';
 document.getElementById('provBaseUrl').value='';
 document.getElementById('provApiKey').value='';
+document.getElementById('provHeaders').value='';
 editingModels=[];
 renderModelTags();
 document.getElementById('testResult').innerHTML='';
@@ -486,6 +502,12 @@ document.getElementById('provFormat').value=p.format;
 document.getElementById('provStatus').value=p.status;
 document.getElementById('provBaseUrl').value=p.baseUrl;
 document.getElementById('provApiKey').value=p.apiKey;
+// 加载自定义请求头
+let hdrText='';
+if(p.customHeaders){
+for(const[k,v]of Object.entries(p.customHeaders)){hdrText+=k+': '+v+'\n';}
+}
+document.getElementById('provHeaders').value=hdrText.trim();
 editingModels=[...(p.models||[])];
 renderModelTags();
 document.getElementById('testResult').innerHTML='';
@@ -497,6 +519,8 @@ const id=document.getElementById('provId').value;
 // 合并输入框中未提交的内容
 const inputVal=document.getElementById('provModelInput').value;
 if(inputVal.trim())addModelTag(inputVal);
+// 解析自定义请求头
+const customHeaders=parseCustomHeaders(document.getElementById('provHeaders').value);
 const body={
 name:document.getElementById('provName').value,
 format:document.getElementById('provFormat').value,
@@ -504,7 +528,8 @@ status:document.getElementById('provStatus').value,
 baseUrl:document.getElementById('provBaseUrl').value,
 apiKey:document.getElementById('provApiKey').value,
 models:[...editingModels],
-disabledModels:[]
+disabledModels:[],
+customHeaders:customHeaders
 };
 if(!body.name||!body.baseUrl){
 toast('请填写名称和 Base URL','error');return;
@@ -549,7 +574,8 @@ const body={
 baseUrl:document.getElementById('provBaseUrl').value,
 apiKey:document.getElementById('provApiKey').value,
 format:document.getElementById('provFormat').value,
-model:editingModels[0]||'gpt-4o-mini'
+model:editingModels[0]||'gpt-4o-mini',
+customHeaders:parseCustomHeaders(document.getElementById('provHeaders').value)
 };
 if(!body.baseUrl||!body.apiKey){
 result.innerHTML='<div class="test-error">请填写 Base URL 和 API Key</div>';
@@ -568,6 +594,68 @@ result.innerHTML='<div class="test-error">请求失败: '+esc(e.message)+'</div>
 }
 btn.innerHTML='测试连接';
 btn.disabled=false;
+}
+
+// 解析自定义请求头文本为对象
+function parseCustomHeaders(text){
+const headers={};
+if(!text||!text.trim())return headers;
+const lines=text.split('\n');
+for(const line of lines){
+const trimmed=line.trim();
+if(!trimmed)continue;
+const idx=trimmed.indexOf(':');
+if(idx>0){
+const key=trimmed.substring(0,idx).trim();
+const val=trimmed.substring(idx+1).trim();
+if(key)headers[key]=val;
+}
+}
+return headers;
+}
+
+// 按站点+模型测试（真实对话）
+async function testModel(providerId,model){
+const modal=document.getElementById('modelTestModal');
+const content=document.getElementById('modelTestContent');
+modal.classList.add('show');
+content.innerHTML='<div class="empty"><span class="loading"></span> 正在测试 '+esc(model)+' ...</div>';
+try{
+const url=API+'/providers/test/'+providerId+'?model='+encodeURIComponent(model);
+const res=await fetch(url,{method:'POST'});
+const data=await res.json();
+let html='<div style="margin-bottom:12px">';
+html+='<div style="font-size:13px;color:var(--muted);margin-bottom:4px">测试模型</div>';
+html+='<div class="mono" style="margin-bottom:8px">'+esc(model)+'</div>';
+html+='<div style="font-size:13px;color:var(--muted);margin-bottom:4px">请求地址</div>';
+html+='<div class="mono" style="margin-bottom:8px;font-size:12px;word-break:break-all">'+esc(data.testUrl||'-')+'</div>';
+html+='<div style="font-size:13px;color:var(--muted);margin-bottom:4px">发送消息</div>';
+html+='<div class="mono" style="margin-bottom:8px;padding:8px;background:var(--bg);border-radius:4px">'+esc(data.testMessage||'-')+'</div>';
+if(data.reqHeaders){
+html+='<div style="font-size:13px;color:var(--muted);margin-bottom:4px">请求头</div>';
+html+='<div class="mono" style="margin-bottom:8px;font-size:12px">';
+for(const[k,v]of Object.entries(data.reqHeaders)){
+if(k==='Authorization'||k==='x-api-key'){html+=esc(k)+': ***<br>';continue;}
+html+=esc(k)+': '+esc(v)+'<br>';
+}
+html+='</div>';
+}
+html+='</div>';
+if(data.success){
+html+='<div class="test-success" style="margin-bottom:8px"><strong>测试成功</strong> (HTTP '+data.status+')</div>';
+html+='<div style="font-size:13px;color:var(--muted);margin-bottom:4px">AI 回复</div>';
+html+='<div class="test-success" style="padding:12px;margin-bottom:8px">'+esc(data.content||'(空)')+'</div>';
+}else{
+html+='<div class="test-error" style="margin-bottom:8px"><strong>测试失败</strong> (HTTP '+data.status+')</div>';
+html+='<div class="test-error" style="padding:12px;margin-bottom:8px">'+esc(data.error||'未知错误')+'</div>';
+}
+if(data.raw){
+html+='<details style="margin-top:8px"><summary style="cursor:pointer;font-size:12px;color:var(--muted)">原始响应</summary><pre class="mono" style="font-size:11px;padding:8px;background:var(--bg);border-radius:4px;overflow-x:auto;margin-top:4px;white-space:pre-wrap">'+esc(data.raw)+'</pre></details>';
+}
+content.innerHTML=html;
+}catch(e){
+content.innerHTML='<div class="test-error">请求失败: '+esc(e.message)+'</div>';
+}
 }
 
 // --- 中转站导出/导入 ---

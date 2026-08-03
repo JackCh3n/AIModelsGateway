@@ -70,6 +70,9 @@ func loadConfig() *Config {
 		if cfg.Providers[i].DisabledModels == nil {
 			cfg.Providers[i].DisabledModels = []string{}
 		}
+		if cfg.Providers[i].CustomHeaders == nil {
+			cfg.Providers[i].CustomHeaders = map[string]string{}
+		}
 	}
 	config = &cfg
 	return config
@@ -224,6 +227,9 @@ func toggleModelEnabled(providerID, model string) bool {
 func ensureDisabledModelsInit(p *Provider) {
 	if p.DisabledModels == nil {
 		p.DisabledModels = []string{}
+	}
+	if p.CustomHeaders == nil {
+		p.CustomHeaders = map[string]string{}
 	}
 }
 

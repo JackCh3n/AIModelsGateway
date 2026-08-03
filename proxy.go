@@ -135,6 +135,11 @@ func proxyRequest(w http.ResponseWriter, r *http.Request, clientFormat string, p
 		req.Header.Set("Authorization", "Bearer "+provider.APIKey)
 	}
 
+	// 应用自定义请求头（覆盖同名默认头）
+	for k, v := range provider.CustomHeaders {
+		req.Header.Set(k, v)
+	}
+
 	resp, err := httpClient.Do(req)
 	if err != nil {
 		log.Printf("  upstream error: %v", err)

@@ -4,17 +4,18 @@ import "time"
 
 // Provider 中转站/官方站配置
 type Provider struct {
-	ID             string    `json:"id"`
-	Name           string    `json:"name"`
-	BaseURL        string    `json:"baseUrl"`  // e.g. https://api.openai.com/v1
-	APIKey         string    `json:"apiKey"`   // 该站点的 API Key
-	Format         string    `json:"format"`   // "openai" 或 "anthropic"
-	Models         []string  `json:"models"`   // 支持的模型列表
-	DisabledModels []string  `json:"disabledModels"` // 被禁用的模型
-	Status         string    `json:"status"`   // active, disabled
-	UsageCount     int64     `json:"usageCount"`
-	TotalTokens    int64     `json:"totalTokens"`
-	CreatedAt      time.Time `json:"createdAt"`
+	ID             string            `json:"id"`
+	Name           string            `json:"name"`
+	BaseURL        string            `json:"baseUrl"`        // e.g. https://api.openai.com/v1
+	APIKey         string            `json:"apiKey"`         // 该站点的 API Key
+	Format         string            `json:"format"`         // "openai" 或 "anthropic"
+	Models         []string          `json:"models"`         // 支持的模型列表
+	DisabledModels []string          `json:"disabledModels"` // 被禁用的模型
+	CustomHeaders  map[string]string `json:"customHeaders"`  // 自定义请求头
+	Status         string            `json:"status"`         // active, disabled
+	UsageCount     int64             `json:"usageCount"`
+	TotalTokens    int64             `json:"totalTokens"`
+	CreatedAt      time.Time         `json:"createdAt"`
 }
 
 // APIKey 网关访问密钥
