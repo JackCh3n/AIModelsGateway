@@ -59,8 +59,10 @@ type UsageLog struct {
 
 // Settings 全局设置
 type Settings struct {
-	ActiveProviderID string `json:"activeProviderId"`
-	DefaultModel     string `json:"defaultModel"`
+	ActiveProviderID string   `json:"activeProviderId"`
+	DefaultModel     string   `json:"defaultModel"`
+	InputPresets     []string `json:"inputPresets"`  // 输入上下文预算预设
+	OutputPresets    []string `json:"outputPresets"` // 输出预算预设
 }
 
 // ModelAlias 模型路由别名

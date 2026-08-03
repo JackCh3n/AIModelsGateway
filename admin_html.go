@@ -183,6 +183,16 @@ tr:hover{background:var(--hover)}
 <label>默认模型</label>
 <input class="input" id="settingDefaultModel" placeholder="gpt-4o-mini">
 </div>
+<div class="form-row">
+<div class="form-group">
+<label>输入预算预设 (逗号分隔)</label>
+<input class="input" id="settingInputPresets" placeholder="32K, 64K, 128K, 256K, 1M">
+</div>
+<div class="form-group">
+<label>输出预算预设 (逗号分隔)</label>
+<input class="input" id="settingOutputPresets" placeholder="8K, 16K, 32K, 64K, 128K">
+</div>
+</div>
 <button class="btn btn-primary" onclick="saveSettings()">保存设置</button>
 </div>
 <div class="card">
@@ -306,26 +316,11 @@ tr:hover{background:var(--hover)}
 <div class="form-row">
 <div class="form-group">
 <label>输入上下文预算</label>
-<select class="select" id="mcInputLimit">
-<option value="">不限制(走客户端)</option>
-<option value="32K">32K</option>
-<option value="64K">64K</option>
-<option value="128K">128K</option>
-<option value="256K">256K</option>
-<option value="1M">1M</option>
-</select>
+<select class="select" id="mcInputLimit"></select>
 </div>
 <div class="form-group">
 <label>输出预算</label>
-<select class="select" id="mcOutputLimit">
-<option value="">不限制(走客户端)</option>
-<option value="8K">8K</option>
-<option value="16K">16K</option>
-<option value="32K">32K</option>
-<option value="64K">64K</option>
-<option value="128K">128K</option>
-<option value="256K">256K</option>
-</select>
+<select class="select" id="mcOutputLimit"></select>
 </div>
 </div>
 <p style="color:var(--muted);font-size:12px;margin-bottom:12px">配置后网关会覆盖请求中的 max_tokens 为输出预算值。留空则不干预，走客户端传的值。</p>
@@ -347,29 +342,11 @@ tr:hover{background:var(--hover)}
 <div class="form-row">
 <div class="form-group">
 <label>输入上下文预算</label>
-<select class="select" id="gmcInputLimit">
-<option value="">不限制(走客户端)</option>
-<option value="32K">32K</option>
-<option value="64K">64K</option>
-<option value="128K">128K</option>
-<option value="256K">256K</option>
-<option value="384K">384K</option>
-<option value="512K">512K</option>
-<option value="1M">1M</option>
-</select>
+<select class="select" id="gmcInputLimit"></select>
 </div>
 <div class="form-group">
 <label>输出预算</label>
-<select class="select" id="gmcOutputLimit">
-<option value="">不限制(走客户端)</option>
-<option value="8K">8K</option>
-<option value="16K">16K</option>
-<option value="32K">32K</option>
-<option value="64K">64K</option>
-<option value="128K">128K</option>
-<option value="256K">256K</option>
-<option value="384K">384K</option>
-</select>
+<select class="select" id="gmcOutputLimit"></select>
 </div>
 </div>
 <div class="form-group">
@@ -431,6 +408,8 @@ let activeProviderId='';
 let editingModels=[];
 let editingKeys=[];
 let allProvidersCache=[];
+let inputPresets=['32K','64K','128K','256K','384K','512K','1M'];
+let outputPresets=['8K','16K','32K','64K','128K','256K','384K'];
 
 // --- 主题切换 ---
 function initTheme(){
@@ -703,8 +682,8 @@ const mc=(p.modelConfigs||[]).find(c=>c.model===model)||{};
 document.getElementById('mcProviderId').value=providerId;
 document.getElementById('mcModel').value=model;
 document.getElementById('mcModelName').textContent=model;
-document.getElementById('mcInputLimit').value=mc.inputLimit||'';
-document.getElementById('mcOutputLimit').value=mc.outputLimit||'';
+fillPresetSelect('mcInputLimit',mc.inputLimit||'',inputPresets);
+fillPresetSelect('mcOutputLimit',mc.outputLimit||'',outputPresets);
 document.getElementById('modelConfigModal').classList.add('show');
 }
 
@@ -1157,13 +1136,38 @@ const res=await fetch(API+'/settings');
 const data=await res.json();
 document.getElementById('settingDefaultModel').value=data.defaultModel||'gpt-4o-mini';
 activeProviderId=data.activeProviderId||'';
+if(data.inputPresets&&data.inputPresets.length)inputPresets=data.inputPresets;
+if(data.outputPresets&&data.outputPresets.length)outputPresets=data.outputPresets;
+renderPresetEditors();
 loadGlobalModelConfigs();
+}
+
+// 填充预设下拉框
+function fillPresetSelect(selId,selectedVal,presets){
+const sel=document.getElementById(selId);
+sel.innerHTML='<option value="">不限制(走客户端)</option>';
+for(const p of presets){
+const s=(p===selectedVal)?' selected':'';
+sel.innerHTML+='<option value="'+esc(p)+'"'+s+'>'+esc(p)+'</option>';
+}
+}
+
+// 渲染设置页的预设编辑器
+function renderPresetEditors(){
+document.getElementById('settingInputPresets').value=inputPresets.join(', ');
+document.getElementById('settingOutputPresets').value=outputPresets.join(', ');
 }
 
 async function saveSettings(){
 const model=document.getElementById('settingDefaultModel').value;
-const res=await fetch(API+'/settings',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({defaultModel:model,activeProviderId:activeProviderId})});
-if(res.ok)toast('已保存','success');
+const ip=document.getElementById('settingInputPresets').value.split(',').map(s=>s.trim()).filter(s=>s);
+const op=document.getElementById('settingOutputPresets').value.split(',').map(s=>s.trim()).filter(s=>s);
+const res=await fetch(API+'/settings',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({defaultModel:model,activeProviderId:activeProviderId,inputPresets:ip,outputPresets:op})});
+if(res.ok){
+if(ip.length)inputPresets=ip;
+if(op.length)outputPresets=op;
+toast('已保存','success');
+}
 }
 
 // --- 全局模型上下文配置 ---
@@ -1204,8 +1208,8 @@ function showGlobalModelConfigModal(){
 document.getElementById('globalMcTitle').textContent='添加模型上下文配置';
 document.getElementById('gmcModel').value='';
 document.getElementById('gmcModel').disabled=false;
-document.getElementById('gmcInputLimit').value='';
-document.getElementById('gmcOutputLimit').value='';
+fillPresetSelect('gmcInputLimit','',inputPresets);
+fillPresetSelect('gmcOutputLimit','',outputPresets);
 renderGmcProviders([]);
 document.getElementById('globalModelConfigModal').classList.add('show');
 }
@@ -1224,8 +1228,8 @@ outputLimit=mc.outputLimit||'';
 providerIds.push(p.id);
 }
 }
-document.getElementById('gmcInputLimit').value=inputLimit;
-document.getElementById('gmcOutputLimit').value=outputLimit;
+fillPresetSelect('gmcInputLimit',inputLimit,inputPresets);
+fillPresetSelect('gmcOutputLimit',outputLimit,outputPresets);
 renderGmcProviders(providerIds);
 document.getElementById('globalModelConfigModal').classList.add('show');
 }

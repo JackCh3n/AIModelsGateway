@@ -67,6 +67,12 @@ func loadConfig() *Config {
 	if cfg.Settings.DefaultModel == "" {
 		cfg.Settings.DefaultModel = "gpt-4o-mini"
 	}
+	if len(cfg.Settings.InputPresets) == 0 {
+		cfg.Settings.InputPresets = []string{"32K", "64K", "128K", "256K", "384K", "512K", "1M"}
+	}
+	if len(cfg.Settings.OutputPresets) == 0 {
+		cfg.Settings.OutputPresets = []string{"8K", "16K", "32K", "64K", "128K", "256K", "384K"}
+	}
 	// 确保每个 provider 的 DisabledModels 已初始化
 	for i := range cfg.Providers {
 		if cfg.Providers[i].DisabledModels == nil {
@@ -532,7 +538,14 @@ func getSettings() Settings {
 
 func updateSettings(s Settings) {
 	cfg := loadConfig()
-	cfg.Settings = s
+	cfg.Settings.ActiveProviderID = s.ActiveProviderID
+	cfg.Settings.DefaultModel = s.DefaultModel
+	if len(s.InputPresets) > 0 {
+		cfg.Settings.InputPresets = s.InputPresets
+	}
+	if len(s.OutputPresets) > 0 {
+		cfg.Settings.OutputPresets = s.OutputPresets
+	}
 	saveConfig()
 }
 
