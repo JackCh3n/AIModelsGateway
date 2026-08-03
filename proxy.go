@@ -128,11 +128,12 @@ func proxyRequest(w http.ResponseWriter, r *http.Request, clientFormat string, p
 
 	// 设置请求头
 	req.Header.Set("Content-Type", "application/json")
+	apiKey := pickAPIKey(provider)
 	if provider.Format == "anthropic" {
-		req.Header.Set("x-api-key", provider.APIKey)
+		req.Header.Set("x-api-key", apiKey)
 		req.Header.Set("anthropic-version", "2023-06-01")
 	} else {
-		req.Header.Set("Authorization", "Bearer "+provider.APIKey)
+		req.Header.Set("Authorization", "Bearer "+apiKey)
 	}
 
 	// 应用自定义请求头（覆盖同名默认头）

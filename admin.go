@@ -234,7 +234,7 @@ func registerAdminRoutes(mux *http.ServeMux) {
 		if model == "" {
 			model = getSettings().DefaultModel
 		}
-		result := testProvider(p.BaseURL, p.APIKey, p.Format, model, p.CustomHeaders)
+		result := testProvider(p.BaseURL, pickAPIKey(p), p.Format, model, p.CustomHeaders)
 		writeJSON(w, http.StatusOK, result)
 	}))
 

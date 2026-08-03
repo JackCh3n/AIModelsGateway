@@ -73,6 +73,18 @@ func loadConfig() *Config {
 		if cfg.Providers[i].CustomHeaders == nil {
 			cfg.Providers[i].CustomHeaders = map[string]string{}
 		}
+		if cfg.Providers[i].APIKeys == nil {
+			cfg.Providers[i].APIKeys = []ProviderKey{}
+		}
+		// 向后兼容：如果 APIKey 不为空但 APIKeys 为空，迁移到 APIKeys
+		if cfg.Providers[i].APIKey != "" && len(cfg.Providers[i].APIKeys) == 0 {
+			cfg.Providers[i].APIKeys = []ProviderKey{{
+				ID:     generateID("pk"),
+				Key:    cfg.Providers[i].APIKey,
+				Name:   "默认",
+				Status: "active",
+			}}
+		}
 	}
 	config = &cfg
 	return config
@@ -231,6 +243,34 @@ func ensureDisabledModelsInit(p *Provider) {
 	if p.CustomHeaders == nil {
 		p.CustomHeaders = map[string]string{}
 	}
+	if p.APIKeys == nil {
+		p.APIKeys = []ProviderKey{}
+	}
+}
+
+// keyRotation 简单的内存轮询计数器
+var keyRotation = map[string]int{}
+var keyRotMu sync.Mutex
+
+// pickAPIKey 从 provider 的多 Key 中轮询选取一个 active 的 key
+func pickAPIKey(p *Provider) string {
+	activeKeys := []string{}
+	for _, k := range p.APIKeys {
+		if k.Status == "active" && k.Key != "" {
+			activeKeys = append(activeKeys, k.Key)
+		}
+	}
+	if len(activeKeys) == 0 {
+		return p.APIKey // 回退到旧字段
+	}
+	if len(activeKeys) == 1 {
+		return activeKeys[0]
+	}
+	keyRotMu.Lock()
+	idx := keyRotation[p.ID]
+	keyRotation[p.ID] = (idx + 1) % len(activeKeys)
+	keyRotMu.Unlock()
+	return activeKeys[idx]
 }
 
 // --- APIKey CRUD ---

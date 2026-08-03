@@ -7,7 +7,8 @@ type Provider struct {
 	ID             string            `json:"id"`
 	Name           string            `json:"name"`
 	BaseURL        string            `json:"baseUrl"`        // e.g. https://api.openai.com/v1
-	APIKey         string            `json:"apiKey"`         // 该站点的 API Key
+	APIKey         string            `json:"apiKey"`         // 主 API Key（向后兼容）
+	APIKeys        []ProviderKey     `json:"apiKeys"`        // 多 Key 轮询
 	Format         string            `json:"format"`         // "openai" 或 "anthropic"
 	Models         []string          `json:"models"`         // 支持的模型列表
 	DisabledModels []string          `json:"disabledModels"` // 被禁用的模型
@@ -16,6 +17,14 @@ type Provider struct {
 	UsageCount     int64             `json:"usageCount"`
 	TotalTokens    int64             `json:"totalTokens"`
 	CreatedAt      time.Time         `json:"createdAt"`
+}
+
+// ProviderKey 站点的多 Key
+type ProviderKey struct {
+	ID     string `json:"id"`
+	Key    string `json:"key"`
+	Name   string `json:"name"`   // 备注
+	Status string `json:"status"` // active, disabled
 }
 
 // APIKey 网关访问密钥

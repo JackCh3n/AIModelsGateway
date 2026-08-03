@@ -105,6 +105,10 @@ tr:hover{background:var(--hover)}
 .copy-btn:hover{border-color:var(--accent);color:var(--accent)}
 .copy-btn.copied{background:var(--green);color:#fff;border-color:var(--green)}
 .url-with-copy{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+.key-item{display:flex;align-items:center;gap:8px;padding:6px 8px;background:var(--bg);border:1px solid var(--border);border-radius:var(--radius);margin-bottom:4px;font-size:13px}
+.key-item .key-val{font-family:'Courier New',monospace;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.key-item .key-name{color:var(--muted);font-size:12px}
+.key-item .key-x{cursor:pointer;border:none;background:none;color:var(--red);font-size:14px;padding:0 4px}
 </style>
 </head>
 <body>
@@ -244,8 +248,13 @@ tr:hover{background:var(--hover)}
 <input class="input" id="provBaseUrl" placeholder="https://api.openai.com/v1">
 </div>
 <div class="form-group">
-<label>API Key</label>
-<input class="input" id="provApiKey" placeholder="sk-..." type="password">
+<label>API Keys (多Key轮询)</label>
+<div id="provKeysList" style="margin-bottom:8px"></div>
+<div style="display:flex;gap:8px">
+<input class="input" id="provKeyInput" placeholder="sk-..." type="password" style="flex:1" onkeydown="handleKeyKeydown(event)">
+<input class="input" id="provKeyName" placeholder="备注(可选)" style="width:120px">
+<button class="btn btn-outline" onclick="addProvKey()">添加</button>
+</div>
 </div>
 <div class="form-group">
 <label>支持的模型 (回车添加，或逗号分隔添加多个)</label>
@@ -324,6 +333,7 @@ tr:hover{background:var(--hover)}
 const API='/admin/api';
 let activeProviderId='';
 let editingModels=[];
+let editingKeys=[];
 let allProvidersCache=[];
 
 // --- 主题切换 ---
@@ -393,6 +403,45 @@ renderModelTags();
 }
 }
 
+// --- 多 Key 管理 ---
+function renderKeyList(){
+const el=document.getElementById('provKeysList');
+el.innerHTML='';
+if(editingKeys.length===0){
+el.innerHTML='<div style="color:var(--muted);font-size:12px;padding:4px 0">暂无 Key，请在下方添加</div>';
+return;
+}
+editingKeys.forEach((k,i)=>{
+const item=document.createElement('div');
+item.className='key-item';
+const masked=k.key.substring(0,8)+'...'+k.key.substring(k.key.length-4);
+let html='<span class="key-val" title="'+esc(k.key)+'">'+esc(masked)+'</span>';
+if(k.name)html+='<span class="key-name">'+esc(k.name)+'</span>';
+html+='<span class="badge badge-'+(k.status||'active')+'">'+(k.status||'active')+'</span>';
+html+='<button class="key-x" onclick="removeProvKey('+i+')" title="删除">×</button>';
+item.innerHTML=html;
+el.appendChild(item);
+});
+}
+function addProvKey(){
+const keyInput=document.getElementById('provKeyInput');
+const nameInput=document.getElementById('provKeyName');
+const key=keyInput.value.trim();
+if(!key){toast('请输入 Key','error');return;}
+editingKeys.push({id:'',key:key,name:nameInput.value.trim(),status:'active'});
+keyInput.value='';
+nameInput.value='';
+renderKeyList();
+keyInput.focus();
+}
+function removeProvKey(i){
+editingKeys.splice(i,1);
+renderKeyList();
+}
+function handleKeyKeydown(e){
+if(e.key==='Enter'){e.preventDefault();addProvKey();}
+}
+
 // --- Providers ---
 async function loadProviders(){
 const res=await fetch(API+'/providers');
@@ -408,18 +457,20 @@ const sRes=await fetch(API+'/settings');
 const settings=await sRes.json();
 activeProviderId=settings.activeProviderId||'';
 
-let html='<table><tr><th>名称</th><th>格式</th><th>Base URL</th><th>模型</th><th>请求数</th><th>状态</th><th>操作</th></tr>';
+let html='<table><tr><th>名称</th><th>格式</th><th>Base URL</th><th>模型</th><th>Keys</th><th>状态</th><th>操作</th></tr>';
 for(const p of data){
 const isActive=p.id===activeProviderId;
 const disabledSet=new Set(p.disabledModels||[]);
 const enabledCount=(p.models||[]).filter(m=>!disabledSet.has(m)).length;
 const totalCount=(p.models||[]).length;
+const activeKeyCount=(p.apiKeys||[]).filter(k=>k.status==='active').length;
+const totalKeyCount=(p.apiKeys||[]).length;
 html+='<tr>';
 html+='<td>'+esc(p.name)+(isActive?' <span class="badge badge-current">当前</span>':'')+'</td>';
 html+='<td><span class="badge badge-'+p.format+'">'+p.format+'</span></td>';
 html+='<td class="mono">'+esc(p.baseUrl)+'</td>';
 html+='<td>'+enabledCount+'/'+totalCount+' <button class="expand-btn" onclick="toggleModels(\''+p.id+'\')">展开</button></td>';
-html+='<td>'+p.usageCount+'</td>';
+html+='<td>'+activeKeyCount+'/'+totalKeyCount+' keys</td>';
 html+='<td><span class="badge badge-'+p.status+'">'+p.status+'</span></td>';
 html+='<td>';
 if(!isActive&&p.status==='active')html+='<button class="btn btn-sm btn-success" onclick="setActive(\''+p.id+'\')">启用</button> ';
@@ -484,7 +535,10 @@ document.getElementById('provName').value='';
 document.getElementById('provFormat').value='openai';
 document.getElementById('provStatus').value='active';
 document.getElementById('provBaseUrl').value='';
-document.getElementById('provApiKey').value='';
+document.getElementById('provKeyInput').value='';
+document.getElementById('provKeyName').value='';
+editingKeys=[];
+renderKeyList();
 document.getElementById('provHeaders').value='';
 editingModels=[];
 renderModelTags();
@@ -501,7 +555,9 @@ document.getElementById('provName').value=p.name;
 document.getElementById('provFormat').value=p.format;
 document.getElementById('provStatus').value=p.status;
 document.getElementById('provBaseUrl').value=p.baseUrl;
-document.getElementById('provApiKey').value=p.apiKey;
+// 加载多 Key
+editingKeys=(p.apiKeys||[]).map(k=>({...k}));
+renderKeyList();
 // 加载自定义请求头
 let hdrText='';
 if(p.customHeaders){
@@ -526,7 +582,8 @@ name:document.getElementById('provName').value,
 format:document.getElementById('provFormat').value,
 status:document.getElementById('provStatus').value,
 baseUrl:document.getElementById('provBaseUrl').value,
-apiKey:document.getElementById('provApiKey').value,
+apiKey:editingKeys.length>0?editingKeys[0].key:'',
+apiKeys:editingKeys.map(k=>({id:k.id||'',key:k.key,name:k.name||'',status:k.status||'active'})),
 models:[...editingModels],
 disabledModels:[],
 customHeaders:customHeaders
@@ -572,13 +629,13 @@ const inputVal=document.getElementById('provModelInput').value;
 if(inputVal.trim())addModelTag(inputVal);
 const body={
 baseUrl:document.getElementById('provBaseUrl').value,
-apiKey:document.getElementById('provApiKey').value,
+apiKey:editingKeys.length>0?editingKeys[0].key:'',
 format:document.getElementById('provFormat').value,
 model:editingModels[0]||'gpt-4o-mini',
 customHeaders:parseCustomHeaders(document.getElementById('provHeaders').value)
 };
 if(!body.baseUrl||!body.apiKey){
-result.innerHTML='<div class="test-error">请填写 Base URL 和 API Key</div>';
+result.innerHTML='<div class="test-error">请填写 Base URL 和至少一个 API Key</div>';
 btn.innerHTML='测试连接';btn.disabled=false;return;
 }
 try{
