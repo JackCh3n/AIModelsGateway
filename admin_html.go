@@ -299,11 +299,11 @@ tr:hover{background:var(--hover)}
 </div>
 <div class="form-group">
 <label>目标站点</label>
-<select class="select" id="aliasProvider"></select>
+<select class="select" id="aliasProvider" onchange="updateAliasModels()"></select>
 </div>
 <div class="form-group">
 <label>实际模型</label>
-<input class="input" id="aliasModel" placeholder="如: gpt-4o-mini">
+<select class="select" id="aliasModel"></select>
 </div>
 <div class="modal-actions">
 <button class="btn btn-outline" onclick="closeModal('aliasModal')">取消</button>
@@ -511,6 +511,7 @@ return;
 const sRes=await fetch(API+'/settings');
 const settings=await sRes.json();
 activeProviderId=settings.activeProviderId||'';
+const defaultModel=settings.defaultModel||'';
 
 let html='<table><tr><th>名称</th><th>格式</th><th>Base URL</th><th>模型</th><th>Keys</th><th>状态</th><th>操作</th></tr>';
 for(const p of data){
@@ -538,11 +539,13 @@ html+='</tr>';
 html+='<tr id="models-'+p.id+'" style="display:none"><td colspan="7"><div class="model-row">';
 for(const m of (p.models||[])){
 const enabled=!disabledSet.has(m);
+const isDefault=(m===defaultModel);
 const modelUrl=getModelUrl(p,m);
 html+='<span class="model-chip'+(enabled?'':' disabled')+'">';
 html+='<button class="chip-toggle" onclick="toggleModel(\''+p.id+'\',\''+esc(m)+'\')" title="'+(enabled?'点击禁用':'点击启用')+'">'+(enabled?'✅':'⏸️')+'</button> ';
 html+=esc(m);
-html+=' <span class="url-hint" style="display:block">'+modelUrl+' <button class="copy-btn" onclick="copyText(\''+esc(modelUrl)+'\',this)">复制</button> <button class="copy-btn" onclick="testModel(\''+p.id+'\',\''+esc(m)+'\')">测试</button></span>';
+if(isDefault)html+=' <span class="badge badge-current">默认</span>';
+html+=' <span class="url-hint" style="display:block">'+modelUrl+' <button class="copy-btn" onclick="copyText(\''+esc(modelUrl)+'\',this)">复制</button> <button class="copy-btn" onclick="testModel(\''+p.id+'\',\''+esc(m)+'\')">测试</button>'+(isDefault?'':' <button class="copy-btn" onclick="setModelDefault(\''+esc(m)+'\')">设为默认</button>')+'</span>';
 html+='</span>';
 }
 if(!p.models||p.models.length===0)html+='<span class="empty" style="padding:8px">暂无模型</span>';
@@ -577,6 +580,16 @@ const res=await fetch(url,{method:'PUT'});
 if(res.ok){
 const data=await res.json();
 toast(data.enabled?'已启用: '+model:'已禁用: '+model,'success');
+loadProviders();
+}else{
+toast('操作失败','error');
+}
+}
+
+async function setModelDefault(model){
+const res=await fetch(API+'/settings',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({defaultModel:model,activeProviderId:activeProviderId})});
+if(res.ok){
+toast('已设为默认模型: '+model,'success');
 loadProviders();
 }else{
 toast('操作失败','error');
@@ -843,14 +856,29 @@ function showAliasModal(){
 document.getElementById('aliasModalTitle').textContent='添加路由别名';
 document.getElementById('aliasId').value='';
 document.getElementById('aliasName').value='';
-document.getElementById('aliasModel').value='';
 // 填充站点下拉
 const sel=document.getElementById('aliasProvider');
 sel.innerHTML='';
 for(const p of allProvidersCache){
 if(p.status==='active')sel.innerHTML+='<option value="'+p.id+'">'+esc(p.name)+' ('+p.format+')</option>';
 }
+updateAliasModels();
 document.getElementById('aliasModal').classList.add('show');
+}
+
+// 根据选中的站点填充模型下拉
+function updateAliasModels(selectedModel){
+const providerId=document.getElementById('aliasProvider').value;
+const p=allProvidersCache.find(x=>x.id===providerId);
+const modelSel=document.getElementById('aliasModel');
+modelSel.innerHTML='';
+if(!p)return;
+const disabledSet=new Set(p.disabledModels||[]);
+for(const m of (p.models||[])){
+if(disabledSet.has(m))continue;
+const sel2=(m===selectedModel)?' selected':'';
+modelSel.innerHTML+='<option value="'+esc(m)+'"'+sel2+'>'+esc(m)+'</option>';
+}
 }
 
 async function editAlias(id){
@@ -861,13 +889,13 @@ if(!a)return;
 document.getElementById('aliasModalTitle').textContent='编辑路由别名';
 document.getElementById('aliasId').value=a.id;
 document.getElementById('aliasName').value=a.name;
-document.getElementById('aliasModel').value=a.model;
 const sel=document.getElementById('aliasProvider');
 sel.innerHTML='';
 for(const p of allProvidersCache){
 const sel2=p.id===a.providerId?' selected':'';
 sel.innerHTML+='<option value="'+p.id+'"'+sel2+'>'+esc(p.name)+' ('+p.format+')</option>';
 }
+updateAliasModels(a.model);
 document.getElementById('aliasModal').classList.add('show');
 }
 
