@@ -215,7 +215,6 @@ tr:hover{background:var(--hover)}
 <span>聊天测试</span>
 <select class="select" id="chatProvider" onchange="onChatProviderChange()" style="width:auto"></select>
 <select class="select" id="chatModel" style="width:auto"></select>
-<select class="select" id="chatKey" style="width:auto;max-width:200px" title="选择测试的Key"></select>
 <button class="btn btn-outline" onclick="clearChat()">清空</button>
 </div>
 <div id="chatMessages" style="flex:1;overflow-y:auto;padding:12px;background:var(--bg);border:1px solid var(--border);border-radius:var(--radius);margin-bottom:12px"></div>
@@ -468,6 +467,7 @@ if(name==='chat')initChat();
 // --- 聊天测试 ---
 let chatHistory=[];
 let chatInitialized=false;
+let chatGatewayKey='';
 
 async function initChat(){
 if(!chatInitialized){
@@ -475,6 +475,13 @@ chatInitialized=true;
 document.getElementById('chatMessages').innerHTML='<div class="empty" style="text-align:center;padding:40px">选择站点、模型和Key，输入消息开始测试</div>';
 }
 await loadChatProviders();
+// 加载网关API Key（用于鉴权）
+try{
+const res=await fetch(API+'/keys');
+const data=await res.json();
+const activeKey=(data||[]).find(k=>k.status==='active');
+chatGatewayKey=activeKey?activeKey.key:'';
+}catch(e){}
 }
 
 async function loadChatProviders(){
@@ -503,21 +510,6 @@ if(p){
 const disabledSet=new Set(p.disabledModels||[]);
 for(const m of(p.models||[])){
 if(!disabledSet.has(m))modelSel.innerHTML+='<option value="'+esc(m)+'">'+esc(m)+'</option>';
-}
-}
-// 填充Key
-const keySel=document.getElementById('chatKey');
-keySel.innerHTML='';
-if(p){
-const activeKeys=(p.apiKeys||[]).filter(k=>k.status==='active');
-if(activeKeys.length===0&&p.apiKey){
-keySel.innerHTML='<option value="'+esc(p.apiKey)+'">'+esc(p.apiKey.substring(0,12)+'...')+'</option>';
-}
-for(const k of activeKeys){
-const masked=k.key.substring(0,8)+'...'+k.key.substring(k.key.length-4);
-let label=masked;
-if(k.name)label+=' ('+k.name+')';
-keySel.innerHTML+='<option value="'+esc(k.key)+'">'+esc(label)+'</option>';
 }
 }
 }
@@ -552,9 +544,8 @@ const msg=input.value.trim();
 if(!msg)return;
 const pid=document.getElementById('chatProvider').value;
 const model=document.getElementById('chatModel').value;
-const apiKey=document.getElementById('chatKey').value;
-if(!pid||!model||!apiKey){
-toast('请选择站点、模型和Key','error');return;
+if(!pid||!model){
+toast('请选择站点和模型','error');return;
 }
 input.value='';
 appendChatMsg('user',msg);
@@ -564,11 +555,12 @@ const aiDiv=appendChatMsg('assistant','');
 aiDiv.querySelector('.role').textContent='AI 正在思考...';
 document.getElementById('chatSendBtn').disabled=true;
 try{
-const p=allProvidersCache.find(x=>x.id===pid);
-const format=p?p.format:'openai';
-const url=p.baseUrl.replace(/\/+$/,'')+(format==='anthropic'?'/messages':'/chat/completions');
-const body=buildChatBody(format,model,apiKey,chatHistory,true);
-const res=await fetch(url,{method:'POST',headers:buildChatHeaders(format,apiKey,p),body:JSON.stringify(body)});
+// 通过网关中转请求，指定 provider
+const gatewayUrl=location.origin+'/v1/chat/completions/p/'+pid;
+const headers={'Content-Type':'application/json'};
+if(chatGatewayKey)headers['Authorization']='Bearer '+chatGatewayKey;
+const body={model:model,messages:chatHistory.map(m=>({role:m.role,content:m.content})),stream:true};
+const res=await fetch(gatewayUrl,{method:'POST',headers:headers,body:JSON.stringify(body)});
 if(!res.ok){
 const errText=await res.text();
 aiDiv.className='chat-msg error';
@@ -594,9 +586,8 @@ const data=trimmed.slice(5).trim();
 if(data==='[DONE]')continue;
 try{
 const json=JSON.parse(data);
-const delta=extractDelta(format,json);
-if(delta){
-fullContent+=delta;
+if(json.choices&&json.choices[0]&&json.choices[0].delta&&json.choices[0].delta.content){
+fullContent+=json.choices[0].delta.content;
 aiDiv.innerHTML='<div class="role">AI</div>'+esc(fullContent);
 document.getElementById('chatMessages').scrollTop=document.getElementById('chatMessages').scrollHeight;
 }
@@ -606,8 +597,10 @@ document.getElementById('chatMessages').scrollTop=document.getElementById('chatM
 if(!fullContent){
 // 非流式响应
 const json=await res.json();
-fullContent=extractDelta(format,json)||'(空回复)';
-aiDiv.innerHTML='<div class="role">AI</div>'+esc(fullContent);
+if(json.choices&&json.choices[0]&&json.choices[0].message&&json.choices[0].message.content){
+fullContent=json.choices[0].message.content;
+}
+aiDiv.innerHTML='<div class="role">AI</div>'+esc(fullContent||'(空回复)');
 }
 chatHistory.push({role:'assistant',content:fullContent});
 }catch(e){
@@ -617,44 +610,6 @@ chatHistory.pop();
 }finally{
 document.getElementById('chatSendBtn').disabled=false;
 }
-}
-
-function buildChatBody(format,model,apiKey,history,stream){
-const msgs=history.map(m=>({role:m.role,content:m.content}));
-if(format==='anthropic'){
-return{model:model,messages:msgs,max_tokens:4096,stream:stream};
-}
-return{model:model,messages:msgs,stream:stream};
-}
-
-function buildChatHeaders(format,apiKey,p){
-const headers={'Content-Type':'application/json'};
-if(format==='anthropic'){
-headers['x-api-key']=apiKey;
-headers['anthropic-version']='2023-06-01';
-}else{
-headers['Authorization']='Bearer '+apiKey;
-}
-// 应用自定义请求头
-if(p&&p.customHeaders){
-for(const[k,v]of Object.entries(p.customHeaders)){headers[k]=v;}
-}
-return headers;
-}
-
-function extractDelta(format,json){
-if(format==='anthropic'){
-// 流式
-if(json.type==='content_block_delta'&&json.delta&&json.delta.text)return json.delta.text;
-// 非流式
-if(json.content&&json.content[0]&&json.content[0].text)return json.content[0].text;
-return'';
-}
-// OpenAI 流式
-if(json.choices&&json.choices[0]&&json.choices[0].delta&&json.choices[0].delta.content)return json.choices[0].delta.content;
-// OpenAI 非流式
-if(json.choices&&json.choices[0]&&json.choices[0].message&&json.choices[0].message.content)return json.choices[0].message.content;
-return'';
 }
 
 // --- 模型标签输入 ---
