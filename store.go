@@ -4,9 +4,11 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"log"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 )
@@ -75,6 +77,9 @@ func loadConfig() *Config {
 		}
 		if cfg.Providers[i].APIKeys == nil {
 			cfg.Providers[i].APIKeys = []ProviderKey{}
+		}
+		if cfg.Providers[i].ModelConfigs == nil {
+			cfg.Providers[i].ModelConfigs = []ModelConfig{}
 		}
 		// 向后兼容：如果 APIKey 不为空但 APIKeys 为空，迁移到 APIKeys
 		if cfg.Providers[i].APIKey != "" && len(cfg.Providers[i].APIKeys) == 0 {
@@ -246,6 +251,9 @@ func ensureDisabledModelsInit(p *Provider) {
 	if p.APIKeys == nil {
 		p.APIKeys = []ProviderKey{}
 	}
+	if p.ModelConfigs == nil {
+		p.ModelConfigs = []ModelConfig{}
+	}
 }
 
 // keyRotation 简单的内存轮询计数器
@@ -271,6 +279,54 @@ func pickAPIKey(p *Provider) string {
 	keyRotation[p.ID] = (idx + 1) % len(activeKeys)
 	keyRotMu.Unlock()
 	return activeKeys[idx]
+}
+
+// getModelConfig 获取 provider 下指定模型的上下文配置，没有则返回 nil
+func getModelConfig(p *Provider, model string) *ModelConfig {
+	for i := range p.ModelConfigs {
+		if p.ModelConfigs[i].Model == model {
+			return &p.ModelConfigs[i]
+		}
+	}
+	return nil
+}
+
+// setModelConfig 设置或更新 provider 下指定模型的上下文配置
+func setModelConfig(providerID string, mc ModelConfig) bool {
+	cfg := loadConfig()
+	for i := range cfg.Providers {
+		if cfg.Providers[i].ID == providerID {
+			for j := range cfg.Providers[i].ModelConfigs {
+				if cfg.Providers[i].ModelConfigs[j].Model == mc.Model {
+					cfg.Providers[i].ModelConfigs[j] = mc
+					saveConfig()
+					return true
+				}
+			}
+			// 不存在则新增
+			cfg.Providers[i].ModelConfigs = append(cfg.Providers[i].ModelConfigs, mc)
+			saveConfig()
+			return true
+		}
+	}
+	return false
+}
+
+// limitToTokens 将 "32K"/"1M" 等转换为 token 数
+func limitToTokens(limit string) int {
+	s := strings.ToUpper(strings.TrimSpace(limit))
+	var n int
+	switch {
+	case strings.HasSuffix(s, "M"):
+		fmt.Sscanf(s, "%dM", &n)
+		return n * 1000000
+	case strings.HasSuffix(s, "K"):
+		fmt.Sscanf(s, "%dK", &n)
+		return n * 1000
+	default:
+		fmt.Sscanf(s, "%d", &n)
+		return n
+	}
 }
 
 // --- APIKey CRUD ---

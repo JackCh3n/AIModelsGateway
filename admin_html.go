@@ -288,6 +288,49 @@ tr:hover{background:var(--hover)}
 </div>
 </div>
 
+<!-- Model Config Modal -->
+<div class="modal-overlay" id="modelConfigModal">
+<div class="modal">
+<div class="modal-title">模型上下文配置</div>
+<input type="hidden" id="mcProviderId">
+<input type="hidden" id="mcModel">
+<div class="form-group">
+<label>模型</label>
+<div class="mono" id="mcModelName" style="padding:8px;background:var(--bg);border-radius:4px"></div>
+</div>
+<div class="form-row">
+<div class="form-group">
+<label>输入上下文预算</label>
+<select class="select" id="mcInputLimit">
+<option value="">不限制(走客户端)</option>
+<option value="32K">32K</option>
+<option value="64K">64K</option>
+<option value="128K">128K</option>
+<option value="256K">256K</option>
+<option value="1M">1M</option>
+</select>
+</div>
+<div class="form-group">
+<label>输出预算</label>
+<select class="select" id="mcOutputLimit">
+<option value="">不限制(走客户端)</option>
+<option value="8K">8K</option>
+<option value="16K">16K</option>
+<option value="32K">32K</option>
+<option value="64K">64K</option>
+<option value="128K">128K</option>
+<option value="256K">256K</option>
+</select>
+</div>
+</div>
+<p style="color:var(--muted);font-size:12px;margin-bottom:12px">配置后网关会覆盖请求中的 max_tokens 为输出预算值。留空则不干预，走客户端传的值。</p>
+<div class="modal-actions">
+<button class="btn btn-outline" onclick="closeModal('modelConfigModal')">取消</button>
+<button class="btn btn-primary" onclick="saveModelConfig()">保存</button>
+</div>
+</div>
+</div>
+
 <!-- Alias Modal -->
 <div class="modal-overlay" id="aliasModal">
 <div class="modal">
@@ -541,11 +584,14 @@ for(const m of (p.models||[])){
 const enabled=!disabledSet.has(m);
 const isDefault=(m===defaultModel);
 const modelUrl=getModelUrl(p,m);
+const mc=(p.modelConfigs||[]).find(c=>c.model===m);
 html+='<span class="model-chip'+(enabled?'':' disabled')+'">';
 html+='<button class="chip-toggle" onclick="toggleModel(\''+p.id+'\',\''+esc(m)+'\')" title="'+(enabled?'点击禁用':'点击启用')+'">'+(enabled?'✅':'⏸️')+'</button> ';
 html+=esc(m);
 if(isDefault)html+=' <span class="badge badge-current">默认</span>';
-html+=' <span class="url-hint" style="display:block">'+modelUrl+' <button class="copy-btn" onclick="copyText(\''+esc(modelUrl)+'\',this)">复制</button> <button class="copy-btn" onclick="testModel(\''+p.id+'\',\''+esc(m)+'\')">测试</button>'+(isDefault?'':' <button class="copy-btn" onclick="setModelDefault(\''+esc(m)+'\')">设为默认</button>')+'</span>';
+if(mc&&mc.outputLimit)html+=' <span class="badge badge-openai" title="输出限制">'+esc(mc.outputLimit)+'</span>';
+if(mc&&mc.inputLimit)html+=' <span class="badge badge-active" title="输入限制">'+esc(mc.inputLimit)+'</span>';
+html+=' <span class="url-hint" style="display:block">'+modelUrl+' <button class="copy-btn" onclick="copyText(\''+esc(modelUrl)+'\',this)">复制</button> <button class="copy-btn" onclick="testModel(\''+p.id+'\',\''+esc(m)+'\')">测试</button> <button class="copy-btn" onclick="showModelConfigModal(\''+p.id+'\',\''+esc(m)+'\')">配置</button>'+(isDefault?'':' <button class="copy-btn" onclick="setModelDefault(\''+esc(m)+'\')">设为默认</button>')+'</span>';
 html+='</span>';
 }
 if(!p.models||p.models.length===0)html+='<span class="empty" style="padding:8px">暂无模型</span>';
@@ -593,6 +639,38 @@ toast('已设为默认模型: '+model,'success');
 loadProviders();
 }else{
 toast('操作失败','error');
+}
+}
+
+// 模型上下文配置
+function showModelConfigModal(providerId,model){
+const p=allProvidersCache.find(x=>x.id===providerId);
+if(!p)return;
+const mc=(p.modelConfigs||[]).find(c=>c.model===model)||{};
+document.getElementById('mcProviderId').value=providerId;
+document.getElementById('mcModel').value=model;
+document.getElementById('mcModelName').textContent=model;
+document.getElementById('mcInputLimit').value=mc.inputLimit||'';
+document.getElementById('mcOutputLimit').value=mc.outputLimit||'';
+document.getElementById('modelConfigModal').classList.add('show');
+}
+
+async function saveModelConfig(){
+const providerId=document.getElementById('mcProviderId').value;
+const model=document.getElementById('mcModel').value;
+const body={
+model:model,
+inputLimit:document.getElementById('mcInputLimit').value,
+outputLimit:document.getElementById('mcOutputLimit').value
+};
+const url=API+'/providers/models/config/'+providerId+'?model='+encodeURIComponent(model);
+const res=await fetch(url,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+if(res.ok){
+closeModal('modelConfigModal');
+toast('已保存模型配置','success');
+loadProviders();
+}else{
+toast('保存失败','error');
 }
 }
 

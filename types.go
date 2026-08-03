@@ -12,11 +12,19 @@ type Provider struct {
 	Format         string            `json:"format"`         // "openai" 或 "anthropic"
 	Models         []string          `json:"models"`         // 支持的模型列表
 	DisabledModels []string          `json:"disabledModels"` // 被禁用的模型
+	ModelConfigs   []ModelConfig     `json:"modelConfigs"`   // 每个模型的上下文配置
 	CustomHeaders  map[string]string `json:"customHeaders"`  // 自定义请求头
 	Status         string            `json:"status"`         // active, disabled
 	UsageCount     int64             `json:"usageCount"`
 	TotalTokens    int64             `json:"totalTokens"`
 	CreatedAt      time.Time         `json:"createdAt"`
+}
+
+// ModelConfig 模型上下文配置
+type ModelConfig struct {
+	Model       string `json:"model"`       // 模型名
+	InputLimit  string `json:"inputLimit"`  // 输入上下文预算: 32K/64K/128K/256K/1M
+	OutputLimit string `json:"outputLimit"` // 输出预算: 8K/16K/32K/64K/128K/256K
 }
 
 // ProviderKey 站点的多 Key

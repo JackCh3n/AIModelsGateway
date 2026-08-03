@@ -83,6 +83,18 @@ func proxyRequest(w http.ResponseWriter, r *http.Request, clientFormat string, p
 		}
 	}
 
+	// 应用模型上下文配置：如果后台配置了输出限制，覆盖请求中的 max_tokens
+	if mc := getModelConfig(provider, model); mc != nil && mc.OutputLimit != "" {
+		maxTokens := limitToTokens(mc.OutputLimit)
+		if maxTokens > 0 {
+			params["max_tokens"] = maxTokens
+			// OpenAI 也可能用 max_completion_tokens
+			params["max_completion_tokens"] = maxTokens
+			body, _ = json.Marshal(params)
+			log.Printf("  [model-config] %s: outputLimit=%s -> max_tokens=%d", model, mc.OutputLimit, maxTokens)
+		}
+	}
+
 	log.Printf("[%s] provider=%s format=%s model=%s stream=%v",
 		clientFormat, provider.Name, provider.Format, model, isStream)
 

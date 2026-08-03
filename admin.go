@@ -43,6 +43,9 @@ func registerAdminRoutes(mux *http.ServeMux) {
 		if p.CustomHeaders == nil {
 			p.CustomHeaders = map[string]string{}
 		}
+		if p.ModelConfigs == nil {
+			p.ModelConfigs = []ModelConfig{}
+		}
 		addProvider(p)
 			writeJSON(w, http.StatusOK, p)
 		default:
@@ -124,6 +127,41 @@ func registerAdminRoutes(mux *http.ServeMux) {
 			"model":           model,
 			"enabled":         isModelEnabled(p, model),
 			"disabledModels":  p.DisabledModels,
+		})
+	}))
+
+	// 模型上下文配置: PUT /admin/api/providers/{id}/models/config?model=xxx
+	mux.HandleFunc("/admin/api/providers/models/config/", corsHandler(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != "PUT" {
+			writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "PUT required"})
+			return
+		}
+		path := strings.TrimPrefix(r.URL.Path, "/admin/api/providers/models/config/")
+		parts := strings.SplitN(path, "/", 2)
+		if len(parts) < 1 || parts[0] == "" {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "provider id required"})
+			return
+		}
+		providerID := parts[0]
+		model := r.URL.Query().Get("model")
+		if model == "" {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "model query param required"})
+			return
+		}
+		var mc ModelConfig
+		if err := json.NewDecoder(r.Body).Decode(&mc); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		mc.Model = model
+		if !setModelConfig(providerID, mc) {
+			writeJSON(w, http.StatusNotFound, map[string]string{"error": "provider not found"})
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{
+			"status":     "ok",
+			"providerId": providerID,
+			"config":     mc,
 		})
 	}))
 
