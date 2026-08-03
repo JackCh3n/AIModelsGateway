@@ -43,12 +43,6 @@ func proxyRequest(w http.ResponseWriter, r *http.Request, clientFormat string, p
 		}
 	}
 
-	if model == "" {
-		model = getSettings().DefaultModel
-		params["model"] = model
-		body, _ = json.Marshal(params)
-	}
-
 	var provider *Provider
 	if providerOverride != "" {
 		provider = getProvider(providerOverride)
@@ -66,6 +60,26 @@ func proxyRequest(w http.ResponseWriter, r *http.Request, clientFormat string, p
 	if provider == nil {
 		writeError(w, clientFormat, http.StatusServiceUnavailable, "没有可用的中转站，请在管理后台添加")
 		return
+	}
+
+	// 模型为空或 "all" 时，自动选择该站点的第一个已启用模型
+	if model == "" || model == "all" {
+		picked := ""
+		disabledSet := map[string]bool{}
+		for _, dm := range provider.DisabledModels {
+			disabledSet[dm] = true
+		}
+		for _, m := range provider.Models {
+			if !disabledSet[m] {
+				picked = m
+				break
+			}
+		}
+		if picked != "" {
+			model = picked
+			params["model"] = model
+			body, _ = json.Marshal(params)
+		}
 	}
 
 	// 校验该模型是否在该站点已启用（仅当站点有模型列表时校验）
