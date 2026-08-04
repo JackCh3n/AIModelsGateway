@@ -154,6 +154,15 @@ func proxyRequest(w http.ResponseWriter, r *http.Request, clientFormat string, p
 		upstreamBody = body
 	}
 
+	// 注入缺失的 reasoning_content（DeepSeek 思维模式兼容）
+	// 仅对 OpenAI 格式上游生效，因为 reasoning_content 是 OpenAI 兼容协议字段
+	if provider.Format == "openai" {
+		if newBody, n := injectReasoningIntoRequestBody(upstreamBody); n > 0 {
+			upstreamBody = newBody
+			log.Printf("[reasoning] injected %d reasoning_content(s) into upstream request", n)
+		}
+	}
+
 	// 构建上游请求
 	upstreamURL := provider.BaseURL
 	if provider.Format == "openai" {
@@ -212,6 +221,15 @@ func handleNonStreamProxy(w http.ResponseWriter, resp *http.Response, clientForm
 		return
 	}
 
+	// 缓存 reasoning_content（DeepSeek 思维模式兼容）
+	// 仅 OpenAI 格式上游响应包含 reasoning_content 字段
+	if providerFormat == "openai" {
+		if reasoning, toolIDs := extractReasoningFromOpenAIResponse(raw); reasoning != "" && len(toolIDs) > 0 {
+			cacheReasoningByToolCalls(toolIDs, reasoning)
+			log.Printf("[reasoning] cached from non-stream response (len=%d, tool_calls=%d)", len(reasoning), len(toolIDs))
+		}
+	}
+
 	// 如果需要格式转换
 	var out map[string]any
 	if clientFormat != providerFormat {
@@ -250,11 +268,13 @@ func handleStreamProxy(w http.ResponseWriter, resp *http.Response, clientFormat,
 	}
 
 	if clientFormat == providerFormat {
-		// 直通流式响应，同时收集用量
+		// 直通流式响应，同时收集用量和 reasoning_content
 		w.Header().Set("Content-Type", "text/event-stream")
 		w.WriteHeader(http.StatusOK)
 		reader := bufio.NewReader(resp.Body)
 		var totalInput, totalOutput int
+		var reasoningBuf strings.Builder
+		var toolCallIDs []string
 		for {
 			line, err := reader.ReadString('\n')
 			if err != nil {
@@ -298,9 +318,18 @@ func handleStreamProxy(w http.ResponseWriter, resp *http.Response, clientFormat,
 								}
 							}
 						}
+						// OpenAI 流式：提取 reasoning_content 和 tool_call ids
+						if providerFormat == "openai" {
+							extractReasoningAndToolIDsFromOpenAIChunk(obj, &reasoningBuf, &toolCallIDs)
+						}
 					}
 				}
 			}
+		}
+		// 缓存 reasoning_content（DeepSeek 思维模式兼容）
+		if providerFormat == "openai" && reasoningBuf.Len() > 0 && len(toolCallIDs) > 0 {
+			cacheReasoningByToolCalls(toolCallIDs, reasoningBuf.String())
+			log.Printf("[reasoning] cached from stream passthrough (len=%d, tool_calls=%d)", reasoningBuf.Len(), len(toolCallIDs))
 		}
 		// 记录用量
 		logEntry := newUsageLog(provider.ID, provider.Name, model, totalInput, totalOutput, clientFormat)
@@ -353,6 +382,8 @@ func openAISSEToAnthropicSSE(w http.ResponseWriter, flusher http.Flusher, body i
 	hasText := false
 	pendingTools := map[int]*streamToolAcc{}
 	var totalInput, totalOutput int
+	var reasoningBuf strings.Builder
+	var toolCallIDs []string
 
 	emitToolBlock := func(acc *streamToolAcc) {
 		acc.emitted = true
@@ -421,6 +452,11 @@ func openAISSEToAnthropicSSE(w http.ResponseWriter, flusher http.Flusher, body i
 			delta = choice
 		}
 
+		// 提取 reasoning_content（DeepSeek 思维模式兼容）
+		if rc, ok := delta["reasoning_content"].(string); ok && rc != "" {
+			reasoningBuf.WriteString(rc)
+		}
+
 		// 文本内容
 		if c, ok := delta["content"].(string); ok && c != "" {
 			if !hasText {
@@ -462,6 +498,7 @@ func openAISSEToAnthropicSSE(w http.ResponseWriter, flusher http.Flusher, body i
 				}
 				if id, ok := tcMap["id"].(string); ok && id != "" {
 					acc.id = id
+					toolCallIDs = append(toolCallIDs, id)
 				}
 				if fn, ok := tcMap["function"].(map[string]any); ok {
 					if name, ok := fn["name"].(string); ok && name != "" {
@@ -511,6 +548,12 @@ func openAISSEToAnthropicSSE(w http.ResponseWriter, flusher http.Flusher, body i
 	})
 
 	emit("message_stop", map[string]any{"type": "message_stop"})
+
+	// 缓存 reasoning_content（DeepSeek 思维模式兼容）
+	if reasoningBuf.Len() > 0 && len(toolCallIDs) > 0 {
+		cacheReasoningByToolCalls(toolCallIDs, reasoningBuf.String())
+		log.Printf("[reasoning] cached from OpenAI->Anthropic stream (len=%d, tool_calls=%d)", reasoningBuf.Len(), len(toolCallIDs))
+	}
 
 	// 记录用量
 	logEntry := newUsageLog(provider.ID, provider.Name, model, totalInput, totalOutput, "anthropic")
