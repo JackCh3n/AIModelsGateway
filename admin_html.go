@@ -97,6 +97,8 @@ tr:hover{background:var(--hover)}
 .model-chip{display:flex;align-items:center;gap:6px;background:var(--tag-bg);color:var(--tag-text);padding:4px 8px;border-radius:4px;font-size:12px;font-family:'Courier New',monospace;margin:4px 0;border:1px solid var(--border)}
 .model-chip.disabled{opacity:.45}
 .model-chip .chip-toggle{cursor:pointer;border:none;background:none;color:inherit;font-size:12px;padding:0;flex-shrink:0}
+#statsByProvider table,#statsByModel table{font-size:12px}
+#statsByProvider,#statsByModel{max-height:200px;overflow-y:auto}
 .model-chip .chip-toggle:hover{opacity:.8}
 .model-chip .chip-name{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .model-chip.disabled .chip-name{text-decoration:line-through}
@@ -189,12 +191,14 @@ tr:hover{background:var(--hover)}
 <div style="position:relative;height:280px">
 <canvas id="chartProvider"></canvas>
 </div>
+<div id="statsByProvider" style="margin-top:12px"></div>
 </div>
 <div class="card">
-<div class="card-title">按模型 Token 分布</div>
+<div class="card-title">按模型统计</div>
 <div style="position:relative;height:280px">
 <canvas id="chartModel"></canvas>
 </div>
+<div id="statsByModel" style="margin-top:12px"></div>
 </div>
 <div class="card">
 <div class="card-title">最近请求日志 <button class="btn btn-sm btn-danger" style="float:right" onclick="clearLogs()">清空日志</button></div>
