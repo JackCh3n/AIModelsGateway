@@ -315,13 +315,16 @@ func registerAdminRoutes(mux *http.ServeMux) {
 			Format        string            `json:"format"`
 			Model         string            `json:"model"`
 			CustomHeaders map[string]string `json:"customHeaders"`
+			ProxyEnabled  bool              `json:"proxyEnabled"`
+			ProxyType     string            `json:"proxyType"`
+			ProxyAddr     string            `json:"proxyAddr"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 			return
 		}
 
-		result := testProvider(req.BaseURL, req.APIKey, req.Format, req.Model, req.CustomHeaders)
+		result := testProvider(req.BaseURL, req.APIKey, req.Format, req.Model, req.CustomHeaders, req.ProxyEnabled, req.ProxyType, req.ProxyAddr)
 		writeJSON(w, http.StatusOK, result)
 	}))
 
@@ -346,7 +349,7 @@ func registerAdminRoutes(mux *http.ServeMux) {
 		if model == "" {
 			model = getSettings().DefaultModel
 		}
-		result := testProvider(p.BaseURL, pickAPIKey(p), p.Format, model, p.CustomHeaders)
+		result := testProvider(p.BaseURL, pickAPIKey(p), p.Format, model, p.CustomHeaders, p.ProxyEnabled, p.ProxyType, p.ProxyAddr)
 		// 记录测试用量
 		if success, ok := result["success"].(bool); ok && success {
 			input, _ := result["inputTokens"].(int)
@@ -518,6 +521,9 @@ func registerAdminRoutes(mux *http.ServeMux) {
 			APIKey        string            `json:"apiKey"`
 			Format        string            `json:"format"`
 			CustomHeaders map[string]string `json:"customHeaders"`
+			ProxyEnabled  bool              `json:"proxyEnabled"`
+			ProxyType     string            `json:"proxyType"`
+			ProxyAddr     string            `json:"proxyAddr"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
@@ -527,13 +533,13 @@ func registerAdminRoutes(mux *http.ServeMux) {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "baseUrl required"})
 			return
 		}
-		result := fetchProviderModels(req.BaseURL, req.APIKey, req.Format, req.CustomHeaders)
+		result := fetchProviderModels(req.BaseURL, req.APIKey, req.Format, req.CustomHeaders, req.ProxyEnabled, req.ProxyType, req.ProxyAddr)
 		writeJSON(w, http.StatusOK, result)
 	}))
 }
 
 // fetchProviderModels 通过 /v1/models 接口获取模型列表
-func fetchProviderModels(baseURL, apiKey, format string, customHeaders map[string]string) map[string]any {
+func fetchProviderModels(baseURL, apiKey, format string, customHeaders map[string]string, proxyEnabled bool, proxyType, proxyAddr string) map[string]any {
 	upstreamURL := strings.TrimSuffix(baseURL, "/") + "/models"
 
 	headers := map[string]string{
@@ -558,7 +564,8 @@ func fetchProviderModels(baseURL, apiKey, format string, customHeaders map[strin
 		return map[string]any{"success": false, "error": "create request: " + err.Error()}
 	}
 
-	resp, err := httpClient.Do(req)
+	proxyProvider := &Provider{ProxyEnabled: proxyEnabled, ProxyType: proxyType, ProxyAddr: proxyAddr}
+	resp, err := getHTTPClient(proxyProvider).Do(req)
 	if err != nil {
 		return map[string]any{"success": false, "error": "request failed: " + err.Error()}
 	}
@@ -736,7 +743,7 @@ func hostnameOf(url string) string {
 }
 
 // testProvider 测试中转站 key 和模型可用性（真实对话测试）
-func testProvider(baseURL, apiKey, format, model string, customHeaders map[string]string) map[string]any {
+func testProvider(baseURL, apiKey, format, model string, customHeaders map[string]string, proxyEnabled bool, proxyType, proxyAddr string) map[string]any {
 	if model == "" {
 		model = "gpt-4o-mini"
 	}
@@ -784,7 +791,9 @@ func testProvider(baseURL, apiKey, format, model string, customHeaders map[strin
 		return map[string]any{"success": false, "error": "create request: " + err.Error()}
 	}
 
-	resp, err := httpClient.Do(req)
+	// 创建带代理的 client
+	proxyProvider := &Provider{ProxyEnabled: proxyEnabled, ProxyType: proxyType, ProxyAddr: proxyAddr}
+	resp, err := getHTTPClient(proxyProvider).Do(req)
 	if err != nil {
 		return map[string]any{"success": false, "error": "request failed: " + err.Error()}
 	}

@@ -8,12 +8,39 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
+
+	"golang.org/x/net/proxy"
 )
 
 var httpClient = &http.Client{
 	Timeout: 5 * time.Minute,
+}
+
+// getHTTPClient 返回配置了代理的 HTTP client
+func getHTTPClient(p *Provider) *http.Client {
+	if !p.ProxyEnabled || p.ProxyAddr == "" {
+		return httpClient
+	}
+	transport := &http.Transport{}
+	switch p.ProxyType {
+	case "http", "https":
+		proxyURL, err := url.Parse(p.ProxyType + "://" + p.ProxyAddr)
+		if err == nil {
+			transport.Proxy = http.ProxyURL(proxyURL)
+		}
+	case "socks5":
+		dialer, err := proxy.SOCKS5("tcp", p.ProxyAddr, nil, proxy.Direct)
+		if err == nil {
+			transport.Dial = dialer.Dial
+		}
+	}
+	return &http.Client{
+		Timeout:   5 * time.Minute,
+		Transport: transport,
+	}
 }
 
 // proxyRequest 处理所有代理请求
@@ -156,7 +183,7 @@ func proxyRequest(w http.ResponseWriter, r *http.Request, clientFormat string, p
 		req.Header.Set(k, v)
 	}
 
-	resp, err := httpClient.Do(req)
+	resp, err := getHTTPClient(provider).Do(req)
 	if err != nil {
 		log.Printf("  upstream error: %v", err)
 		writeError(w, clientFormat, http.StatusBadGateway, "upstream request failed: "+err.Error())

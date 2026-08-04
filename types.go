@@ -21,6 +21,9 @@ type Provider struct {
 	UsageCount     int64             `json:"usageCount"`
 	TotalTokens    int64             `json:"totalTokens"`
 	CreatedAt      time.Time         `json:"createdAt"`
+	ProxyEnabled   bool              `json:"proxyEnabled"`   // 是否启用代理
+ProxyType      string            `json:"proxyType"`      // http, https, socks5
+ProxyAddr      string            `json:"proxyAddr"`      // 代理地址，如 127.0.0.1:7890
 }
 
 // ModelConfig 模型上下文配置

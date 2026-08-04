@@ -298,6 +298,20 @@ tr:hover{background:var(--hover)}
 <input class="input" id="provBaseUrl" placeholder="https://api.openai.com/v1" oninput="this.value=this.value.trim()">
 </div>
 <div class="form-group">
+<label>代理设置</label>
+<div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+<label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:13px;color:var(--text);margin:0">
+<input type="checkbox" id="provProxyEnabled" onchange="toggleProxyFields()"> 启用代理
+</label>
+<select class="select" id="provProxyType" style="width:auto;display:none">
+<option value="http">HTTP</option>
+<option value="https">HTTPS</option>
+<option value="socks5">SOCKS5</option>
+</select>
+<input class="input" id="provProxyAddr" placeholder="127.0.0.1:7890" style="flex:1;min-width:150px;display:none" oninput="this.value=this.value.trim()">
+</div>
+</div>
+<div class="form-group">
 <label>打卡签到地址 (可选，支持签到送积分的站点)</label>
 <input class="input" id="provCheckinUrl" placeholder="https://api.xxx.com/user/checkin" oninput="this.value=this.value.trim()">
 </div>
@@ -672,7 +686,11 @@ document.getElementById('chatSendBtn').disabled=false;
 }
 }
 
-// --- 模型标签输入 ---
+function toggleProxyFields(){
+const enabled=document.getElementById('provProxyEnabled').checked;
+document.getElementById('provProxyType').style.display=enabled?'':'none';
+document.getElementById('provProxyAddr').style.display=enabled?'':'none';
+}
 function renderModelTags(){
 const wrap=document.getElementById('provModelsWrap');
 const input=document.getElementById('provModelInput');
@@ -773,7 +791,10 @@ content.innerHTML='<div class="empty"><span class="loading"></span> 正在测试
 try{
 const res=await fetch(API+'/test',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({
 baseUrl:baseUrl,apiKey:k.key,format:format,model:model,
-customHeaders:{...editingHeaders}
+customHeaders:{...editingHeaders},
+proxyEnabled:document.getElementById('provProxyEnabled').checked,
+proxyType:document.getElementById('provProxyType').value,
+proxyAddr:document.getElementById('provProxyAddr').value.trim()
 })});
 const data=await res.json();
 let html='<div style="margin-bottom:12px">';
@@ -958,6 +979,10 @@ document.getElementById('provFormat').value='openai';
 document.getElementById('provStatus').value='active';
 document.getElementById('provBaseUrl').value='';
 document.getElementById('provCheckinUrl').value='';
+document.getElementById('provProxyEnabled').checked=false;
+document.getElementById('provProxyType').value='http';
+document.getElementById('provProxyAddr').value='';
+toggleProxyFields();
 document.getElementById('provKeyInput').value='';
 document.getElementById('provKeyName').value='';
 editingKeys=[];
@@ -980,6 +1005,10 @@ document.getElementById('provFormat').value=p.format;
 document.getElementById('provStatus').value=p.status;
 document.getElementById('provBaseUrl').value=p.baseUrl;
 document.getElementById('provCheckinUrl').value=p.checkinUrl||'';
+document.getElementById('provProxyEnabled').checked=!!p.proxyEnabled;
+document.getElementById('provProxyType').value=p.proxyType||'http';
+document.getElementById('provProxyAddr').value=p.proxyAddr||'';
+toggleProxyFields();
 // 加载多 Key
 editingKeys=(p.apiKeys||[]).map(k=>({...k}));
 renderKeyList();
@@ -1009,7 +1038,10 @@ apiKey:editingKeys.length>0?editingKeys[0].key:'',
 apiKeys:editingKeys.map(k=>({id:k.id||'',key:k.key,name:k.name||'',status:k.status||'active'})),
 models:[...editingModels],
 disabledModels:[],
-customHeaders:customHeaders
+customHeaders:customHeaders,
+proxyEnabled:document.getElementById('provProxyEnabled').checked,
+proxyType:document.getElementById('provProxyType').value,
+proxyAddr:document.getElementById('provProxyAddr').value.trim()
 };
 if(!body.name||!body.baseUrl){
 toast('请填写名称和 Base URL','error');return;
@@ -1088,7 +1120,10 @@ baseUrl:document.getElementById('provBaseUrl').value,
 apiKey:editingKeys.length>0?editingKeys[0].key:'',
 format:document.getElementById('provFormat').value,
 model:editingModels[0]||'gpt-4o-mini',
-customHeaders:{...editingHeaders}
+customHeaders:{...editingHeaders},
+proxyEnabled:document.getElementById('provProxyEnabled').checked,
+proxyType:document.getElementById('provProxyType').value,
+proxyAddr:document.getElementById('provProxyAddr').value.trim()
 };
 if(!body.baseUrl||!body.apiKey){
 result.innerHTML='<div class="test-error">请填写 Base URL 和至少一个 API Key</div>';
@@ -1126,7 +1161,7 @@ btn.innerHTML='<span class="loading"></span> 获取中...';
 btn.disabled=true;
 status.innerHTML='';
 try{
-const res=await fetch(API+'/providers/fetch-models',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({baseUrl,apiKey,format,customHeaders:{...editingHeaders}})});
+const res=await fetch(API+'/providers/fetch-models',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({baseUrl,apiKey,format,customHeaders:{...editingHeaders},proxyEnabled:document.getElementById('provProxyEnabled').checked,proxyType:document.getElementById('provProxyType').value,proxyAddr:document.getElementById('provProxyAddr').value.trim()})});
 const data=await res.json();
 if(data.success){
 const fetched=data.models||[];
