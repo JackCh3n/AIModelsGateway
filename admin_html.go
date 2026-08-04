@@ -330,12 +330,13 @@ tr:hover{background:var(--hover)}
 <input class="input" id="provCheckinUrl" placeholder="https://api.xxx.com/user/checkin" oninput="this.value=this.value.trim()">
 </div>
 <div class="form-group">
-<label>API Keys (多Key轮询)</label>
+<label>API Keys (多Key轮询，回车或逗号分隔添加多个)</label>
 <div id="provKeysList" style="margin-bottom:8px"></div>
 <div style="display:flex;gap:8px">
-<input class="input" id="provKeyInput" placeholder="sk-..." style="flex:1" oninput="this.value=this.value.trim()" onkeydown="handleKeyKeydown(event)">
+<input class="input" id="provKeyInput" placeholder="sk-... 回车或逗号分隔添加多个" style="flex:1" oninput="this.value=this.value.trim()" onkeydown="handleKeyKeydown(event)">
 <input class="input" id="provKeyName" placeholder="备注(可选)" style="width:120px">
 <button class="btn btn-outline" onclick="addProvKey()">添加</button>
+<button class="btn btn-outline" onclick="clearProvKeys()">🗑 一键清空</button>
 </div>
 </div>
 <div class="form-group">
@@ -350,12 +351,12 @@ tr:hover{background:var(--hover)}
 </div>
 </div>
 <div class="form-group">
-<label>自定义请求头</label>
+<label>自定义请求头 (回车添加；支持 Key: Value 或 Key=Value，分号分隔多个)</label>
 <div id="provHeadersList" style="margin-bottom:6px"></div>
 <div style="display:flex;gap:8px">
-<input class="input" id="provHeaderKey" placeholder="Header Key" style="flex:1" onkeydown="handleHeaderKeydown(event)">
-<input class="input" id="provHeaderVal" placeholder="Header Value" style="flex:1" onkeydown="handleHeaderKeydown(event)">
+<input class="input" id="provHeaderInput" placeholder="Authorization: Bearer xxx; Content-Type: application/json" style="flex:1" oninput="this.value=this.value.trim()" onkeydown="handleHeaderKeydown(event)">
 <button class="btn btn-outline" onclick="addProvHeader()">添加</button>
+<button class="btn btn-outline" onclick="clearProvHeaders()">🗑 一键清空</button>
 </div>
 </div>
 <div class="form-group">
@@ -770,13 +771,28 @@ el.appendChild(item);
 function addProvKey(){
 const keyInput=document.getElementById('provKeyInput');
 const nameInput=document.getElementById('provKeyName');
-const key=keyInput.value.trim();
-if(!key){toast('请输入 Key','error');return;}
-editingKeys.push({id:'',key:key,name:nameInput.value.trim(),status:'active'});
+const raw=keyInput.value.trim();
+if(!raw){toast('请输入 Key','error');return;}
+const name=nameInput.value.trim();
+const parts=(raw.includes(',')||raw.includes('，'))?raw.split(/[,，]/):[raw];
+let added=0;
+parts.forEach(p=>{
+p=p.trim();
+if(!p)return;
+editingKeys.push({id:'',key:p,name:name,status:'active'});
+added++;
+});
 keyInput.value='';
 nameInput.value='';
 renderKeyList();
 keyInput.focus();
+toast('已添加 '+added+' 个 Key','success');
+}
+function clearProvKeys(){
+if(!editingKeys.length){toast('没有可清空的 Key','error');return;}
+editingKeys=[];
+renderKeyList();
+toast('已清空全部 Key','success');
 }
 function removeProvKey(i){
 editingKeys.splice(i,1);
@@ -1227,15 +1243,34 @@ el.appendChild(item);
 }
 
 function addProvHeader(){
-const keyInput=document.getElementById('provHeaderKey');
-const valInput=document.getElementById('provHeaderVal');
-const key=keyInput.value.trim();
-if(!key){toast('请输入 Header Key','error');return;}
-editingHeaders[key]=valInput.value.trim();
-keyInput.value='';
-valInput.value='';
+const input=document.getElementById('provHeaderInput');
+const raw=input.value.trim();
+if(!raw){toast('请输入请求头','error');return;}
+let added=0;
+const parts=raw.split(/[;；]/);
+parts.forEach(part=>{
+part=part.trim();
+if(!part)continue;
+let sep=part.indexOf(':');
+if(sep===-1)sep=part.indexOf('=');
+if(sep===-1){toast('格式应为 Key: Value 或 Key=Value','error');return;}
+const key=part.slice(0,sep).trim();
+const val=part.slice(sep+1).trim();
+if(!key){toast('请求头 Key 不能为空','error');return;}
+editingHeaders[key]=val;
+added++;
+});
+input.value='';
 renderHeaderList();
-keyInput.focus();
+input.focus();
+toast('已添加 '+added+' 个请求头','success');
+}
+
+function clearProvHeaders(){
+if(!Object.keys(editingHeaders).length){toast('没有可清空的请求头','error');return;}
+editingHeaders={};
+renderHeaderList();
+toast('已清空全部请求头','success');
 }
 
 function removeProvHeader(key){
