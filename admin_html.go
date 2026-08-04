@@ -312,6 +312,10 @@ tr:hover{background:var(--hover)}
 </div>
 <div class="form-group">
 <label>支持的模型 (回车添加，或逗号分隔添加多个)</label>
+<div style="display:flex;gap:8px;margin-bottom:8px">
+<button class="btn btn-outline" id="fetchModelsBtn" onclick="fetchProviderModels()" style="font-size:13px">🔌 一键获取模型</button>
+<span id="fetchModelsStatus" style="color:var(--muted);font-size:12px;align-self:center"></span>
+</div>
 <div class="tag-input-wrap" id="provModelsWrap">
 <input class="tag-input" id="provModelInput" placeholder="输入模型名后回车..." oninput="this.value=this.value.trim()" onkeydown="handleModelKeydown(event)">
 </div>
@@ -1080,6 +1084,45 @@ result.innerHTML='<div class="test-error">失败 (HTTP '+data.status+'): '+esc(d
 result.innerHTML='<div class="test-error">请求失败: '+esc(e.message)+'</div>';
 }
 btn.innerHTML='测试连接';
+btn.disabled=false;
+}
+
+// --- 一键获取模型 ---
+async function fetchProviderModels(){
+const btn=document.getElementById('fetchModelsBtn');
+const status=document.getElementById('fetchModelsStatus');
+const baseUrl=document.getElementById('provBaseUrl').value.trim();
+const apiKey=editingKeys.length>0?editingKeys[0].key:'';
+const format=document.getElementById('provFormat').value;
+if(!baseUrl){
+status.innerHTML='<span style="color:var(--danger)">请先填写 Base URL</span>';return;
+}
+if(format!=='openai'){
+status.innerHTML='<span style="color:var(--muted)">仅 OpenAI 格式支持一键获取</span>';return;
+}
+btn.innerHTML='<span class="loading"></span> 获取中...';
+btn.disabled=true;
+status.innerHTML='';
+try{
+const res=await fetch(API+'/providers/fetch-models',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({baseUrl,apiKey,format,customHeaders:{...editingHeaders}})});
+const data=await res.json();
+if(data.success){
+const fetched=data.models||[];
+const beforeCount=editingModels.length;
+fetched.forEach(m=>{if(!editingModels.includes(m))editingModels.push(m);});
+renderModelTags();
+const added=editingModels.length-beforeCount;
+status.innerHTML='<span style="color:var(--success)">✔ 获取 '+fetched.length+' 个模型，新增 '+added+' 个</span>';
+if(fetched.length===0){
+status.innerHTML='<span style="color:var(--muted)">接口返回成功但未解析到模型，请检查响应格式</span>';
+}
+}else{
+status.innerHTML='<span style="color:var(--danger)">✘ '+(data.error||'获取失败')+'</span>';
+}
+}catch(e){
+status.innerHTML='<span style="color:var(--danger)">✘ '+esc(e.message)+'</span>';
+}
+btn.innerHTML='🔌 一键获取模型';
 btn.disabled=false;
 }
 

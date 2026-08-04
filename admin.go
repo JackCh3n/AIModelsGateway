@@ -463,6 +463,127 @@ func registerAdminRoutes(mux *http.ServeMux) {
 		addProvider(*p)
 		writeJSON(w, http.StatusOK, p)
 	}))
+
+	// 一键获取模型: POST /admin/api/providers/fetch-models
+	mux.HandleFunc("/admin/api/providers/fetch-models", corsHandler(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != "POST" {
+			writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "POST required"})
+			return
+		}
+		var req struct {
+			BaseURL       string            `json:"baseUrl"`
+			APIKey        string            `json:"apiKey"`
+			Format        string            `json:"format"`
+			CustomHeaders map[string]string `json:"customHeaders"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		if req.BaseURL == "" {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "baseUrl required"})
+			return
+		}
+		result := fetchProviderModels(req.BaseURL, req.APIKey, req.Format, req.CustomHeaders)
+		writeJSON(w, http.StatusOK, result)
+	}))
+}
+
+// fetchProviderModels 通过 /v1/models 接口获取模型列表
+func fetchProviderModels(baseURL, apiKey, format string, customHeaders map[string]string) map[string]any {
+	upstreamURL := strings.TrimSuffix(baseURL, "/") + "/models"
+
+	headers := map[string]string{
+		"Content-Type": "application/json",
+	}
+	if format == "anthropic" {
+		if apiKey != "" {
+			headers["x-api-key"] = apiKey
+			headers["anthropic-version"] = "2023-06-01"
+		}
+	} else {
+		if apiKey != "" {
+			headers["Authorization"] = "Bearer " + apiKey
+		}
+	}
+	for k, v := range customHeaders {
+		headers[k] = v
+	}
+
+	req, err := newHTTPRequest("GET", upstreamURL, nil, headers)
+	if err != nil {
+		return map[string]any{"success": false, "error": "create request: " + err.Error()}
+	}
+
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return map[string]any{"success": false, "error": "request failed: " + err.Error()}
+	}
+	defer resp.Body.Close()
+
+	respBody, _ := io.ReadAll(resp.Body)
+	respStr := string(respBody)
+
+	if resp.StatusCode != 200 {
+		return map[string]any{
+			"success": false,
+			"status":  resp.StatusCode,
+			"error":   truncate(respStr, 500),
+		}
+	}
+
+	var respObj map[string]any
+	if err := json.Unmarshal(respBody, &respObj); err != nil {
+		return map[string]any{"success": false, "error": "parse response: " + err.Error()}
+	}
+
+	// 标准 OpenAI 格式: {"data": [{"id": "model-name", ...}, ...]}
+	var models []string
+	if data, ok := respObj["data"].([]any); ok {
+		seen := map[string]bool{}
+		for _, item := range data {
+			if m, ok := item.(map[string]any); ok {
+				if id, ok := m["id"].(string); ok && id != "" {
+					if !seen[id] {
+						seen[id] = true
+						models = append(models, id)
+					}
+				}
+			}
+		}
+	}
+
+	// 如果没有 data 数组，尝试兼容 {"models": [...]} 或直接数组
+	if len(models) == 0 {
+		if raw, ok := respObj["models"].([]any); ok {
+			for _, item := range raw {
+				switch v := item.(type) {
+				case string:
+					models = append(models, v)
+				case map[string]any:
+					if id, ok := v["id"].(string); ok && id != "" {
+						models = append(models, id)
+					}
+				}
+			}
+		} else if raw, ok := respObj["data"].([]any); ok {
+			for _, item := range raw {
+				if s, ok := item.(string); ok && s != "" {
+					models = append(models, s)
+				}
+			}
+		}
+	}
+
+	log.Printf("  fetch models: %s -> %d, got %d models", upstreamURL, resp.StatusCode, len(models))
+
+	return map[string]any{
+		"success": true,
+		"status":  resp.StatusCode,
+		"models":  models,
+		"count":   len(models),
+		"raw":     truncate(respStr, 1000),
+	}
 }
 
 // parseOpenCodeConfig 解析 OpenCode 格式配置并生成 Provider
