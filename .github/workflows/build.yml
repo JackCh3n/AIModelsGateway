@@ -6,6 +6,9 @@ on:
       - 'v*'
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
   build:
     name: Build ${{ matrix.os }}-${{ matrix.arch }}
@@ -38,16 +41,26 @@ jobs:
         with:
           go-version: '1.25'
 
+      - name: Generate version
+        id: version
+        env:
+          TZ: Asia/Shanghai
+        run: |
+          if [[ "${{ startsWith(github.ref, 'refs/tags/') }}" == "true" ]]; then
+            echo "version=${GITHUB_REF_NAME}" >> $GITHUB_OUTPUT
+          else
+            echo "version=v$(date +'%Y_%m%d_%H%M')" >> $GITHUB_OUTPUT
+          fi
+
       - name: Build
         env:
           GOOS: ${{ matrix.os }}
           GOARCH: ${{ matrix.arch }}
           CGO_ENABLED: 0
+          VERSION: ${{ steps.version.outputs.version }}
         run: |
-          VERSION=${GITHUB_REF_NAME:-dev}
           BINARY_NAME=aimodels-${{ matrix.os }}-${{ matrix.arch }}${{ matrix.ext }}
           go build -ldflags "-s -w -X main.Version=${VERSION}" -o "dist/${BINARY_NAME}" .
-          echo "BINARY_NAME=${BINARY_NAME}" >> $GITHUB_ENV
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
@@ -55,8 +68,34 @@ jobs:
           name: aimodels-${{ matrix.os }}-${{ matrix.arch }}
           path: dist/
 
-      - name: Upload to Release
-        if: startsWith(github.ref, 'refs/tags/')
+  release:
+    name: Release
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Generate version
+        id: version
+        env:
+          TZ: Asia/Shanghai
+        run: |
+          if [[ "${{ startsWith(github.ref, 'refs/tags/') }}" == "true" ]]; then
+            echo "version=${GITHUB_REF_NAME}" >> $GITHUB_OUTPUT
+          else
+            echo "version=v$(date +'%Y_%m%d_%H%M')" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist/
+          merge-multiple: true
+
+      - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
-          files: dist/${{ env.BINARY_NAME }}
+          tag_name: ${{ steps.version.outputs.version }}
+          name: ${{ steps.version.outputs.version }}
+          files: dist/*
+          generate_release_notes: true
+          allow_update: true
+          fail_on_unmatched_files: true
