@@ -534,43 +534,43 @@ func fetchProviderModels(baseURL, apiKey, format string, customHeaders map[strin
 
 	var respObj map[string]any
 	if err := json.Unmarshal(respBody, &respObj); err != nil {
-		return map[string]any{"success": false, "error": "parse response: " + err.Error()}
+		// 可能是裸数组 [{"id":"model"}, ...] 或 ["model1", ...]
+		var respArr []any
+		if err2 := json.Unmarshal(respBody, &respArr); err2 != nil {
+			return map[string]any{"success": false, "error": "parse response: " + err.Error()}
+		}
+		respObj = map[string]any{"data": respArr}
 	}
 
 	// 标准 OpenAI 格式: {"data": [{"id": "model-name", ...}, ...]}
 	var models []string
-	if data, ok := respObj["data"].([]any); ok {
-		seen := map[string]bool{}
-		for _, item := range data {
-			if m, ok := item.(map[string]any); ok {
-				if id, ok := m["id"].(string); ok && id != "" {
-					if !seen[id] {
-						seen[id] = true
-						models = append(models, id)
-					}
-				}
+	seen := map[string]bool{}
+	extractModel := func(item any) {
+		switch v := item.(type) {
+		case string:
+			if v != "" && !seen[v] {
+				seen[v] = true
+				models = append(models, v)
+			}
+		case map[string]any:
+			if id, ok := v["id"].(string); ok && id != "" && !seen[id] {
+				seen[id] = true
+				models = append(models, id)
 			}
 		}
 	}
 
-	// 如果没有 data 数组，尝试兼容 {"models": [...]} 或直接数组
+	if data, ok := respObj["data"].([]any); ok {
+		for _, item := range data {
+			extractModel(item)
+		}
+	}
+
+	// 如果没有 data 数组，尝试兼容 {"models": [...]}
 	if len(models) == 0 {
 		if raw, ok := respObj["models"].([]any); ok {
 			for _, item := range raw {
-				switch v := item.(type) {
-				case string:
-					models = append(models, v)
-				case map[string]any:
-					if id, ok := v["id"].(string); ok && id != "" {
-						models = append(models, id)
-					}
-				}
-			}
-		} else if raw, ok := respObj["data"].([]any); ok {
-			for _, item := range raw {
-				if s, ok := item.(string); ok && s != "" {
-					models = append(models, s)
-				}
+				extractModel(item)
 			}
 		}
 	}

@@ -109,7 +109,7 @@ tr:hover{background:var(--hover)}
 .copy-btn.copied{background:var(--green);color:#fff;border-color:var(--green)}
 .url-with-copy{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
 .chat-msg{max-width:80%;padding:8px 12px;border-radius:8px;margin-bottom:8px;word-break:break-word;white-space:pre-wrap;font-size:14px;line-height:1.5}
-.chat-msg.user{background:var(--primary);color:#fff;margin-left:auto}
+.chat-msg.user{background:var(--accent);color:#fff;margin-left:auto}
 .chat-msg.assistant{background:var(--card);border:1px solid var(--border);margin-right:auto}
 .chat-msg.error{background:#fee;color:#c33;border:1px solid #fcc;margin-right:auto}
 .chat-msg .role{font-size:11px;opacity:.7;margin-bottom:2px}
@@ -1095,7 +1095,7 @@ const baseUrl=document.getElementById('provBaseUrl').value.trim();
 const apiKey=editingKeys.length>0?editingKeys[0].key:'';
 const format=document.getElementById('provFormat').value;
 if(!baseUrl){
-status.innerHTML='<span style="color:var(--danger)">请先填写 Base URL</span>';return;
+status.innerHTML='<span style="color:var(--red)">请先填写 Base URL</span>';return;
 }
 if(format!=='openai'){
 status.innerHTML='<span style="color:var(--muted)">仅 OpenAI 格式支持一键获取</span>';return;
@@ -1112,15 +1112,15 @@ const beforeCount=editingModels.length;
 fetched.forEach(m=>{if(!editingModels.includes(m))editingModels.push(m);});
 renderModelTags();
 const added=editingModels.length-beforeCount;
-status.innerHTML='<span style="color:var(--success)">✔ 获取 '+fetched.length+' 个模型，新增 '+added+' 个</span>';
+status.innerHTML='<span style="color:var(--green)">✔ 获取 '+fetched.length+' 个模型，新增 '+added+' 个</span>';
 if(fetched.length===0){
 status.innerHTML='<span style="color:var(--muted)">接口返回成功但未解析到模型，请检查响应格式</span>';
 }
 }else{
-status.innerHTML='<span style="color:var(--danger)">✘ '+(data.error||'获取失败')+'</span>';
+status.innerHTML='<span style="color:var(--red)">✘ '+(data.error||'获取失败')+'</span>';
 }
 }catch(e){
-status.innerHTML='<span style="color:var(--danger)">✘ '+esc(e.message)+'</span>';
+status.innerHTML='<span style="color:var(--red)">✘ '+esc(e.message)+'</span>';
 }
 btn.innerHTML='🔌 一键获取模型';
 btn.disabled=false;
