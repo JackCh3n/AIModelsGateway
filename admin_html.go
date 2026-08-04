@@ -312,8 +312,9 @@ tr:hover{background:var(--hover)}
 </div>
 <div class="form-group">
 <label>支持的模型 (回车添加，或逗号分隔添加多个)</label>
-<div style="display:flex;gap:8px;margin-bottom:8px">
+<div style="display:flex;gap:8px;margin-bottom:8px;flex-wrap:wrap">
 <button class="btn btn-outline" id="fetchModelsBtn" onclick="fetchProviderModels()" style="font-size:13px">🔌 一键获取模型</button>
+<button class="btn btn-outline" onclick="clearProviderModels()" style="font-size:13px">🗑 一键清空</button>
 <span id="fetchModelsStatus" style="color:var(--muted);font-size:12px;align-self:center"></span>
 </div>
 <div class="tag-input-wrap" id="provModelsWrap">
@@ -344,11 +345,32 @@ tr:hover{background:var(--hover)}
 <div class="modal-overlay" id="opencodeModal">
 <div class="modal">
 <div class="modal-title">导入 OpenCode 配置</div>
-<p style="color:var(--muted);font-size:13px;margin-bottom:8px">粘贴 OpenCode 的 JSON 配置（含 provider.openai/anthropic）：</p>
+<p style="color:var(--muted);font-size:13px;margin-bottom:8px">粘贴 OpenCode 的 JSON 配置（含 provider.openai/anthropic），或上传文件：</p>
 <textarea class="input" id="opencodeInput" placeholder='{"provider":{"openai":{"options":{"baseURL":"https://...","apiKey":"sk-..."},"models":{...}}}}' style="width:100%;min-height:280px;resize:vertical;font-family:'Courier New',monospace;font-size:12px"></textarea>
+<div style="display:flex;gap:8px;margin-top:8px">
+<button class="btn btn-outline" onclick="document.getElementById('opencodeFile').click()">📁 上传文件</button>
+<input type="file" id="opencodeFile" accept=".json,application/json" style="display:none" onchange="handleOpenCodeFile(event)">
+</div>
 <div class="modal-actions">
 <button class="btn btn-outline" onclick="closeModal('opencodeModal')">取消</button>
 <button class="btn btn-primary" onclick="submitOpenCode()">导入</button>
+</div>
+</div>
+</div>
+
+<!-- Import Config Modal -->
+<div class="modal-overlay" id="importModal">
+<div class="modal">
+<div class="modal-title">导入配置</div>
+<p style="color:var(--muted);font-size:13px;margin-bottom:8px">粘贴 JSON 配置（中转站配置或 newapi 连接格式），或上传文件：</p>
+<textarea class="input" id="importInput" placeholder='{"_type":"newapi_channel_conn","key":"sk-...","url":"https://..."}' style="width:100%;min-height:280px;resize:vertical;font-family:'Courier New',monospace;font-size:12px"></textarea>
+<div style="display:flex;gap:8px;margin-top:8px">
+<button class="btn btn-outline" onclick="document.getElementById('importFile').click()">📁 上传文件</button>
+<input type="file" id="importFile" accept=".json,application/json" style="display:none" onchange="handleImportFile(event)">
+</div>
+<div class="modal-actions">
+<button class="btn btn-outline" onclick="closeModal('importModal')">取消</button>
+<button class="btn btn-primary" onclick="submitImport()">导入</button>
 </div>
 </div>
 </div>
@@ -1126,6 +1148,14 @@ btn.innerHTML='🔌 一键获取模型';
 btn.disabled=false;
 }
 
+function clearProviderModels(){
+if(!confirm('确定清空该中转站的所有模型？'))return;
+editingModels=[];
+renderModelTags();
+document.getElementById('fetchModelsStatus').innerHTML='';
+toast('已清空所有模型','success');
+}
+
 // --- 自定义请求头编辑器 ---
 let editingHeaders={};
 
@@ -1232,7 +1262,8 @@ toast('正在下载配置文件','success');
 }
 
 function importProvider(){
-document.getElementById('importFile').click();
+document.getElementById('importInput').value='';
+document.getElementById('importModal').classList.add('show');
 }
 
 function showOpenCodeModal(){
@@ -1266,19 +1297,53 @@ async function handleImportFile(event){
 const file=event.target.files[0];
 if(!file)return;
 const text=await file.text();
+document.getElementById('importInput').value=text;
+event.target.value='';
+}
+
+async function handleOpenCodeFile(event){
+const file=event.target.files[0];
+if(!file)return;
+const text=await file.text();
+document.getElementById('opencodeInput').value=text;
+event.target.value='';
+}
+
+async function submitImport(){
+const text=document.getElementById('importInput').value.trim();
+if(!text){toast('请粘贴配置内容','error');return;
+}
+let parsed;
 try{
-const p=JSON.parse(text);
-const res=await fetch(API+'/providers/import',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(p)});
+parsed=JSON.parse(text);
+}catch(e){
+toast('JSON格式错误: '+e.message,'error');
+return;
+}
+// 判断格式：newapi 连接配置
+if(parsed._type==='newapi_channel_conn'){
+const res=await fetch(API+'/providers/import/conn',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(parsed)});
 if(res.ok){
+const p=await res.json();
+closeModal('importModal');
+toast('导入成功: '+p.name+' (请返回编辑页面一键获取模型)','success');
+loadProviders();
+}else{
+const err=await res.json().catch(()=>({}));
+toast('导入失败: '+(err.error||''),'error');
+}
+return;
+}
+// 标准中转站配置
+const res=await fetch(API+'/providers/import',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(parsed)});
+if(res.ok){
+closeModal('importModal');
 toast('导入成功','success');
 loadProviders();
 }else{
-toast('导入失败','error');
+const err=await res.json().catch(()=>({}));
+toast('导入失败: '+(err.error||''),'error');
 }
-}catch(e){
-toast('文件格式错误: '+e.message,'error');
-}
-event.target.value='';
 }
 
 // --- URL 一键复制 ---

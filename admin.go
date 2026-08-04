@@ -464,6 +464,49 @@ func registerAdminRoutes(mux *http.ServeMux) {
 		writeJSON(w, http.StatusOK, p)
 	}))
 
+	// 导入 newapi 连接配置: POST /admin/api/providers/import/conn
+	mux.HandleFunc("/admin/api/providers/import/conn", corsHandler(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != "POST" {
+			writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "POST required"})
+			return
+		}
+		var raw struct {
+			Type string `json:"_type"`
+			Key  string `json:"key"`
+			URL  string `json:"url"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&raw); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		if raw.Type != "newapi_channel_conn" {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "不支持的格式: " + raw.Type})
+			return
+		}
+		baseURL := strings.Trim(raw.URL, "`")
+		if baseURL == "" {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "缺少 url"})
+			return
+		}
+		// OpenAI 格式：若 url 未包含 /v1 则追加
+		if !strings.Contains(baseURL, "/v1") {
+			baseURL = strings.TrimSuffix(baseURL, "/") + "/v1"
+		}
+		p := Provider{
+			ID:             generateID("prov"),
+			Name:           hostnameOf(baseURL),
+			BaseURL:        baseURL,
+			APIKey:         raw.Key,
+			APIKeys:        []ProviderKey{{ID: generateID("pk"), Key: raw.Key, Name: "导入", Status: "active"}},
+			Format:         "openai",
+			Models:         []string{},
+			DisabledModels: []string{},
+			Status:         "active",
+		}
+		addProvider(p)
+		writeJSON(w, http.StatusOK, p)
+	}))
+
 	// 一键获取模型: POST /admin/api/providers/fetch-models
 	mux.HandleFunc("/admin/api/providers/fetch-models", corsHandler(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != "POST" {
