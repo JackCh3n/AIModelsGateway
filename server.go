@@ -47,7 +47,10 @@ func startServer(port int) error {
 	}))
 
 	// 管理后台
-	registerAdminRoutes(mux)
+registerAdminRoutes(mux)
+
+// 静态文件服务（Chart.js 等）
+mux.Handle("/static/", http.StripPrefix("/static/", http.FileServer(http.Dir("static"))))
 
 	// API Key 鉴权中间件
 	authMiddleware := func(next http.HandlerFunc, clientFormat string) http.HandlerFunc {

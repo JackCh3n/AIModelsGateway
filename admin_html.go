@@ -179,12 +179,22 @@ tr:hover{background:var(--hover)}
 <div class="panel" id="panel-stats">
 <div class="stats-grid" id="statsGrid"></div>
 <div class="card">
-<div class="card-title">按中转站统计</div>
-<div id="statsByProvider"></div>
+<div class="card-title">用量趋势（按日期）</div>
+<div style="position:relative;height:280px">
+<canvas id="chartDaily"></canvas>
+</div>
 </div>
 <div class="card">
-<div class="card-title">按模型统计</div>
-<div id="statsByModel"></div>
+<div class="card-title">按中转站统计</div>
+<div style="position:relative;height:280px">
+<canvas id="chartProvider"></canvas>
+</div>
+</div>
+<div class="card">
+<div class="card-title">按模型 Token 分布</div>
+<div style="position:relative;height:280px">
+<canvas id="chartModel"></canvas>
+</div>
 </div>
 <div class="card">
 <div class="card-title">最近请求日志 <button class="btn btn-sm btn-danger" style="float:right" onclick="clearLogs()">清空日志</button></div>
@@ -1588,6 +1598,7 @@ await loadStatsLogs(statsCurrentPage);
 renderStatsOverview(stats);
 renderStatsByProvider(stats);
 renderStatsByModel(stats);
+renderCharts(stats);
 }
 
 async function loadStatsLogs(page){
@@ -1660,6 +1671,38 @@ toast('清空失败','error');
 
 function statCard(val,label){
 return '<div class="stat-card"><div class="stat-value">'+val+'</div><div class="stat-label">'+label+'</div></div>';
+}
+
+let chartDailyInst=null;
+let chartProviderInst=null;
+let chartModelInst=null;
+
+function renderCharts(stats){
+const dailyData=stats.byDate||{};
+const providerData=stats.byProvider||{};
+const modelData=stats.byModel||{};
+// 日期趋势图
+const dailyLabels=Object.keys(dailyData).sort();
+const dailyInput=dailyLabels.map(d=>dailyData[d].input||0);
+const dailyOutput=dailyLabels.map(d=>dailyData[d].output||0);
+const dailyReqs=dailyLabels.map(d=>dailyData[d].count||0);
+if(chartDailyInst)chartDailyInst.destroy();
+const ctxDaily=document.getElementById('chartDaily').getContext('2d');
+chartDailyInst=new Chart(ctxDaily,{type:'line',data:{labels:dailyLabels,datasets:[{label:'输入 Token',data:dailyInput,borderColor:'#3b82f6',backgroundColor:'rgba(59,130,246,.1)',fill:true,tension:.3},{label:'输出 Token',data:dailyOutput,borderColor:'#10b981',backgroundColor:'rgba(16,185,129,.1)',fill:true,tension:.3}]},options:{responsive:true,maintainAspectRatio:false,interaction:{mode:'index',intersect:false},plugins:{legend:{position:'top'}},scales:{y:{beginAtZero:true}}}});
+// 中转站柱状图
+const provLabels=Object.keys(providerData);
+const provReqs=provLabels.map(p=>providerData[p].count||0);
+const provTokens=provLabels.map(p=>providerData[p].total||0);
+if(chartProviderInst)chartProviderInst.destroy();
+const ctxProv=document.getElementById('chartProvider').getContext('2d');
+chartProviderInst=new Chart(ctxProv,{type:'bar',data:{labels:provLabels,datasets:[{label:'请求数',data:provReqs,backgroundColor:'rgba(59,130,246,.7)',order:2},{label:'Token 总量',data:provTokens,backgroundColor:'rgba(16,185,129,.7)',order:1}]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{position:'top'}},scales:{y:{beginAtZero:true}}}});
+// 模型饼图
+const modelLabels=Object.keys(modelData);
+const modelTokens=modelLabels.map(m=>modelData[m].total||0);
+const modelColors=['#3b82f6','#10b981','#f59e0b','#ef4444','#8b5cf6','#ec4899','#06b6d4','#84cc16','#f97316','#6366f1'];
+if(chartModelInst)chartModelInst.destroy();
+const ctxModel=document.getElementById('chartModel').getContext('2d');
+chartModelInst=new Chart(ctxModel,{type:'doughnut',data:{labels:modelLabels,datasets:[{data:modelTokens,backgroundColor:modelColors.slice(0,modelLabels.length)}]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{position:'right'}}}});
 }
 
 // --- Settings ---
@@ -1877,5 +1920,6 @@ initTheme();
 loadProviders();
 loadKeys();
 </script>
+<script src="/static/chart.umd.min.js"></script>
 </body>
 </html>`
