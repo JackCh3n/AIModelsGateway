@@ -1464,7 +1464,28 @@ try{
 const url=API+'/providers/test/'+providerId+'?model='+encodeURIComponent(model);
 const res=await fetch(url,{method:'POST'});
 const data=await res.json();
-let html='<div style="margin-bottom:12px">';
+// 取站点当前使用的 Key
+const prov=allProvidersCache.find(x=>x.id===providerId);
+const activeKeys=(prov&&prov.apiKeys||[]).filter(k=>(k.status||'active')==='active');
+const testKey=activeKeys.length?activeKeys[0].key:(prov?prov.apiKey:'');
+const resultText=data.success?'正常':'异常';
+// 组装一键复制文本
+let copyStr='站点: '+(prov?prov.name:'')+'\n';
+copyStr+='测试 Key: '+(testKey||'-')+'\n';
+copyStr+='测试模型: '+model+'\n';
+copyStr+='请求地址: '+(data.testUrl||'-')+'\n';
+copyStr+='发送消息: '+(data.testMessage||'-')+'\n';
+copyStr+='测试结果: '+resultText+' (HTTP '+(data.status||'-')+')\n';
+copyStr+=(data.success?('AI 回复: '+(data.content||'')):('错误信息: '+(data.error||'')));
+let html='<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">';
+html+='<div style="font-size:15px;font-weight:600">测试结果: <span class="badge badge-'+(data.success?'active':'disabled')+'">'+resultText+'</span></div>';
+html+='<button class="copy-btn" onclick="copyText('+JSON.stringify(copyStr)+',this)">📋 一键复制</button>';
+html+='</div>';
+html+='<div style="margin-bottom:12px">';
+html+='<div style="font-size:13px;color:var(--muted);margin-bottom:4px">测试站点</div>';
+html+='<div class="mono" style="margin-bottom:8px">'+esc(prov?prov.name:'-')+'</div>';
+html+='<div style="font-size:13px;color:var(--muted);margin-bottom:4px">测试 Key</div>';
+html+='<div class="mono" style="margin-bottom:8px;word-break:break-all">'+esc(testKey||'-')+'</div>';
 html+='<div style="font-size:13px;color:var(--muted);margin-bottom:4px">测试模型</div>';
 html+='<div class="mono" style="margin-bottom:8px">'+esc(model)+'</div>';
 html+='<div style="font-size:13px;color:var(--muted);margin-bottom:4px">请求地址</div>';
@@ -1482,11 +1503,10 @@ html+='</div>';
 }
 html+='</div>';
 if(data.success){
-html+='<div class="test-success" style="margin-bottom:8px"><strong>测试成功</strong> (HTTP '+data.status+')</div>';
 html+='<div style="font-size:13px;color:var(--muted);margin-bottom:4px">AI 回复</div>';
 html+='<div class="test-success" style="padding:12px;margin-bottom:8px">'+esc(data.content||'(空)')+'</div>';
 }else{
-html+='<div class="test-error" style="margin-bottom:8px"><strong>测试失败</strong> (HTTP '+data.status+')</div>';
+html+='<div style="font-size:13px;color:var(--muted);margin-bottom:4px">错误信息</div>';
 html+='<div class="test-error" style="padding:12px;margin-bottom:8px">'+esc(data.error||'未知错误')+'</div>';
 }
 if(data.raw){
