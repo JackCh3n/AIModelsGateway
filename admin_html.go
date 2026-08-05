@@ -340,10 +340,14 @@ tr:hover{background:var(--hover)}
 <div id="provKeysList" style="margin-bottom:8px"></div>
 <div style="display:flex;gap:8px;margin-bottom:8px">
 <input class="input" id="provKeyInput" placeholder="sk-... 回车或逗号分隔添加多个" style="flex:1" oninput="this.value=this.value.trim()" onkeydown="handleKeyKeydown(event)">
-<input class="input" id="provKeyName" placeholder="备注(可选)" style="width:120px">
 <button class="btn btn-outline" onclick="addProvKey()">添加</button>
-<button class="btn btn-outline" onclick="decodeProvKeyInput()" title="将输入框中的 Base64 内容解码为 Key">🔓 解码</button>
-<button class="btn btn-outline" onclick="clearProvKeys()">🗑 清空</button>
+</div>
+<div style="margin-bottom:8px">
+<input class="input" id="provKeyName" placeholder="备注(可选，一行)" style="width:100%">
+</div>
+<div style="display:flex;gap:8px;margin-bottom:8px">
+<button class="btn btn-outline" onclick="decodeProvKeyInput()" title="将输入框中的 Base64 内容解码为 Key">🔓 Base64解码</button>
+<button class="btn btn-outline" onclick="clearProvKeys()">🗑 清空Keys</button>
 </div>
 <div style="display:flex;gap:8px;align-items:center">
 <label style="font-size:13px;color:var(--muted);display:flex;align-items:center;gap:4px;cursor:pointer"><input type="checkbox" id="provKeySelectAll" onchange="toggleAllKeys(this.checked)"> 全选</label>
@@ -366,14 +370,16 @@ tr:hover{background:var(--hover)}
 <div class="form-group">
 <label>自定义请求头 (回车添加；支持 Key: Value 或 Key=Value，分号分隔多个)</label>
 <div id="provHeadersList" style="margin-bottom:6px"></div>
+<div style="margin-bottom:8px">
+<input class="input" id="provHeaderInput" placeholder="Authorization: Bearer xxx; Content-Type: application/json" style="width:100%" oninput="this.value=this.value.trim()" onkeydown="handleHeaderKeydown(event)">
+</div>
 <div style="display:flex;gap:8px">
-<input class="input" id="provHeaderInput" placeholder="Authorization: Bearer xxx; Content-Type: application/json" style="flex:1" oninput="this.value=this.value.trim()" onkeydown="handleHeaderKeydown(event)">
 <button class="btn btn-outline" onclick="addProvHeader()">添加</button>
 <button class="btn btn-outline" onclick="clearProvHeaders()">🗑 一键清空</button>
 </div>
 </div>
 <div class="form-group">
-<button class="btn btn-outline" onclick="testProvider()" id="testBtn">测试连接</button>
+<button class="btn btn-outline" onclick="testProvider()" id="testBtn" style="width:100%">测试连接</button>
 <div id="testResult"></div>
 </div>
 <div class="modal-actions">
@@ -1249,6 +1255,14 @@ const inputVal=document.getElementById('provModelInput').value;
 if(inputVal.trim())addModelTag(inputVal);
 // 自定义请求头
 const customHeaders={...editingHeaders};
+// 名称未填写时自动生成默认名：中转站-随机4位字符
+const nameVal=document.getElementById('provName').value.trim();
+if(!nameVal){
+const chars='abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+let rand='';
+for(let i=0;i<4;i++)rand+=chars[Math.floor(Math.random()*chars.length)];
+document.getElementById('provName').value='中转站-'+rand;
+}
 const body={
 name:document.getElementById('provName').value,
 format:document.getElementById('provFormat').value,
@@ -1982,6 +1996,9 @@ renderPresetTags('inputPresetsWrap','inputPresetInput',inputPresets);
 renderPresetTags('outputPresetsWrap','outputPresetInput',outputPresets);
 }
 
+let _dragPresetFrom=null;
+let _dragPresetWrap=null;
+
 function renderPresetTags(wrapId,inputId,arr){
 const wrap=document.getElementById(wrapId);
 const input=document.getElementById(inputId);
@@ -1991,8 +2008,65 @@ tags.forEach(t=>t.remove());
 arr.forEach((v,i)=>{
 const tag=document.createElement('span');
 tag.className='tag';
+tag.draggable=true;
+tag.style.cursor='grab';
+tag.dataset.index=i;
 tag.innerHTML=esc(v)+'<button class="tag-x" onclick="removePresetTag(\''+wrapId+'\','+i+',\''+inputId+'\')">×</button>';
+if(arr.length>1){
+tag.addEventListener('dragstart',function(e){
+_dragPresetFrom=i;
+_dragPresetWrap=wrapId;
+e.dataTransfer.effectAllowed='move';
+e.dataTransfer.setData('text/plain',String(i));
+this.style.opacity='.5';
+});
+tag.addEventListener('dragend',function(){
+this.style.opacity='';
+});
+tag.addEventListener('dragover',function(e){
+e.preventDefault();
+e.dataTransfer.dropEffect='move';
+this.style.outline='1px dashed var(--accent)';
+});
+tag.addEventListener('dragleave',function(){
+this.style.outline='';
+});
+tag.addEventListener('drop',function(e){
+e.preventDefault();
+this.style.outline='';
+if(_dragPresetWrap!==wrapId||_dragPresetFrom===null)return;
+const src=_dragPresetFrom;
+const to=i;
+_dragPresetFrom=null;
+_dragPresetWrap=null;
+if(src===to)return;
+const isInput=wrapId==='inputPresetsWrap';
+const list=isInput?inputPresets:outputPresets;
+const[moved]=list.splice(src,1);
+list.splice(to,0,moved);
+renderPresetEditors();
+});
+}
 wrap.insertBefore(tag,input);
+});
+// 支持拖到末尾（input 前的空位）
+wrap.addEventListener('dragover',function(e){
+e.preventDefault();
+});
+wrap.addEventListener('drop',function(e){
+e.preventDefault();
+const src=e.dataTransfer.getData('text/plain');
+if(_dragPresetWrap!==wrapId||src==='')return;
+const from=parseInt(src,10);
+if(isNaN(from))return;
+const isInput=wrapId==='inputPresetsWrap';
+const list=isInput?inputPresets:outputPresets;
+if(from===list.length-1)return;
+const[moved]=list.splice(from,1);
+list.push(moved);
+_dragPresetFrom=null;
+_dragPresetWrap=null;
+renderPresetEditors();
 });
 }
 
