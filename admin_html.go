@@ -340,20 +340,16 @@ tr:hover{background:var(--hover)}
 <div id="provKeysList" style="margin-bottom:8px"></div>
 <div style="display:flex;gap:8px;margin-bottom:8px">
 <input class="input" id="provKeyInput" placeholder="sk-... 回车或逗号分隔添加多个" style="flex:1" oninput="this.value=this.value.trim()" onkeydown="handleKeyKeydown(event)">
-<button class="btn btn-outline" onclick="addProvKey()">添加</button>
+<input class="input" id="provKeyName" placeholder="备注(可选)" style="width:20%" onkeydown="handleKeyKeydown(event)">
 </div>
-<div style="margin-bottom:8px">
-<input class="input" id="provKeyName" placeholder="备注(可选，一行)" style="width:100%">
-</div>
-<div style="display:flex;gap:8px;margin-bottom:8px">
-<button class="btn btn-outline" onclick="decodeProvKeyInput()" title="将输入框中的 Base64 内容解码为 Key">🔓 Base64解码</button>
-<button class="btn btn-outline" onclick="clearProvKeys()">🗑 清空Keys</button>
-</div>
-<div style="display:flex;gap:8px;align-items:center">
+<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
 <label style="font-size:13px;color:var(--muted);display:flex;align-items:center;gap:4px;cursor:pointer"><input type="checkbox" id="provKeySelectAll" onchange="toggleAllKeys(this.checked)"> 全选</label>
 <span class="badge badge-active" id="provKeySelCount">已选 0</span>
 <button class="btn btn-outline btn-sm" onclick="batchDeleteKeys()">🗑 批量删除</button>
 <button class="btn btn-outline btn-sm" onclick="testAllProvKeys()">⚡ 一键检测</button>
+<button class="btn btn-outline btn-sm" onclick="decodeProvKeyInput()" title="将输入框中的 Base64 内容解码为 Key">🔓 Base64编码</button>
+<button class="btn btn-outline btn-sm" onclick="clearProvKeys()">🗑 清空Keys</button>
+<button class="btn btn-outline btn-sm" onclick="addProvKey()">添加</button>
 </div>
 </div>
 <div class="form-group">
