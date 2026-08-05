@@ -34,6 +34,17 @@ go run . -start -port 3458
 .\build.ps1
 ```
 
+### cnb.cool 云原生构建与 Release
+
+仓库已托管至 [cnb.cool](https://cnb.cool)，内置 `.cnb.yml` 流水线，功能对齐 GitHub Actions：
+
+- **推送 Tag**（如 `git tag v1.0.0 && git push origin v1.0.0`）：多平台交叉编译 → 自动创建 Release → 上传全部构建产物
+- **推送 master 代码**：自动构建并生成时间戳版本 Release
+- **手动触发**：在流水线页面点击运行，生成手动 Release
+
+支持 Windows / Linux（含 loong64、ppc64le、riscv64、s390x）/ macOS / FreeBSD 共 12 个平台架构组合。
+构建脚本见 `scripts/build-all.sh`、`scripts/gen-release-notes.sh`。
+
 ### 访问地址
 
 启动后浏览器打开管理后台：

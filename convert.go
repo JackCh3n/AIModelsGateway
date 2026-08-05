@@ -72,7 +72,7 @@ func anthropicToOpenAIReq(body []byte) (map[string]any, error) {
 			case []any:
 				textParts := []string{}
 				var toolCalls []any
-				var toolResult *map[string]any
+				var toolResults []any
 
 				for _, block := range c {
 					b, ok := block.(map[string]any)
@@ -108,7 +108,7 @@ func anthropicToOpenAIReq(body []byte) (map[string]any, error) {
 							"content":      b["content"],
 							"tool_call_id": b["tool_use_id"],
 						}
-						toolResult = &tr
+						toolResults = append(toolResults, tr)
 					}
 				}
 
@@ -119,8 +119,9 @@ func anthropicToOpenAIReq(body []byte) (map[string]any, error) {
 						"tool_calls": toolCalls,
 					}
 					msgs = append(msgs, m)
-				} else if role == "user" && toolResult != nil {
-					msgs = append(msgs, *toolResult)
+				} else if role == "user" && len(toolResults) > 0 {
+					// 多个 tool_result 需拆成多条独立 tool 消息，避免覆盖丢失
+					msgs = append(msgs, toolResults...)
 				} else {
 					msgs = append(msgs, map[string]any{"role": role, "content": strings.Join(textParts, "\n")})
 				}
@@ -133,8 +134,11 @@ func anthropicToOpenAIReq(body []byte) (map[string]any, error) {
 	if tools, ok := req["tools"].([]any); ok {
 		openAI["tools"] = anthropicToolsToOpenAI(tools)
 	}
+	// tool_choice: Anthropic 格式转换为 OpenAI 格式
+	// Anthropic: {"type": "auto"|"any"|"tool", "name": "xxx"} / "auto" / "none" / "any"
+	// OpenAI: {"type": "function", "function": {"name": "xxx"}} / "auto" / "none" / "required"
 	if tc, ok := req["tool_choice"]; ok {
-		openAI["tool_choice"] = tc
+		openAI["tool_choice"] = anthropicToolChoiceToOpenAI(tc)
 	}
 
 	return openAI, nil
@@ -257,8 +261,9 @@ func openAIToAnthropicReq(body []byte) (map[string]any, error) {
 	if tools, ok := req["tools"].([]any); ok {
 		anthropic["tools"] = openAIToolsToAnthropic(tools)
 	}
+	// tool_choice: OpenAI 格式转换为 Anthropic 格式
 	if tc, ok := req["tool_choice"]; ok {
-		anthropic["tool_choice"] = tc
+		anthropic["tool_choice"] = openAIToolChoiceToAnthropic(tc)
 	}
 
 	return anthropic, nil
@@ -535,6 +540,60 @@ func openAIToolsToAnthropic(tools []any) []any {
 		out = append(out, ant)
 	}
 	return out
+}
+
+// anthropicToolChoiceToOpenAI 将 Anthropic tool_choice 转换为 OpenAI 格式
+func anthropicToolChoiceToOpenAI(tc any) any {
+	switch v := tc.(type) {
+	case string:
+		// "auto" / "none" / "any"
+		if v == "any" {
+			return "required"
+		}
+		return v
+	case map[string]any:
+		if t, _ := v["type"].(string); t == "tool" {
+			name, _ := v["name"].(string)
+			return map[string]any{
+				"type": "function",
+				"function": map[string]any{
+					"name": name,
+				},
+			}
+		}
+		// {"type": "auto"|"any"}
+		if t, _ := v["type"].(string); t == "any" {
+			return "required"
+		}
+		return "auto"
+	default:
+		return tc
+	}
+}
+
+// openAIToolChoiceToAnthropic 将 OpenAI tool_choice 转换为 Anthropic 格式
+func openAIToolChoiceToAnthropic(tc any) any {
+	switch v := tc.(type) {
+	case string:
+		// "auto" / "none" / "required"
+		if v == "required" {
+			return "any"
+		}
+		return v
+	case map[string]any:
+		if t, _ := v["type"].(string); t == "function" {
+			if fn, ok := v["function"].(map[string]any); ok {
+				name, _ := fn["name"].(string)
+				return map[string]any{
+					"type": "tool",
+					"name": name,
+				}
+			}
+		}
+		return "auto"
+	default:
+		return tc
+	}
 }
 
 func getNested(obj map[string]any, keys ...any) any {

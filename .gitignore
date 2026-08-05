@@ -8,6 +8,10 @@ aimodels.exe
 data/
 *.json.bak
 
+# Build output
+dist/
+RELEASE_NOTES.md
+
 # IDE
 .idea/
 .vscode/

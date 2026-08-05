@@ -665,7 +665,7 @@ const res=await fetch(gatewayUrl,{method:'POST',headers:headers,body:JSON.string
 if(!res.ok){
 const errText=await res.text();
 aiDiv.className='chat-msg error';
-aiDiv.innerHTML='<div class="role">错误</div>HTTP '+res.status+': '+errText;
+aiDiv.innerHTML='<div class="role">错误</div>HTTP '+res.status+': '+esc(errText);
 chatHistory.pop();
 return;
 }

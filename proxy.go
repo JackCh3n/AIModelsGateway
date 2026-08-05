@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
 	"time"
 
 	"golang.org/x/net/proxy"
@@ -19,10 +20,22 @@ var httpClient = &http.Client{
 	Timeout: 5 * time.Minute,
 }
 
+// 代理 HTTP Client 缓存：按 (enabled,type,addr) 复用 Transport，避免每次请求新建连接
+var proxyClients = struct {
+	sync.Mutex
+	m map[string]*http.Client
+}{m: make(map[string]*http.Client)}
+
 // getHTTPClient 返回配置了代理的 HTTP client
 func getHTTPClient(p *Provider) *http.Client {
 	if !p.ProxyEnabled || p.ProxyAddr == "" {
 		return httpClient
+	}
+	cacheKey := p.ProxyType + "|" + p.ProxyAddr
+	proxyClients.Lock()
+	defer proxyClients.Unlock()
+	if c, ok := proxyClients.m[cacheKey]; ok {
+		return c
 	}
 	transport := &http.Transport{}
 	switch p.ProxyType {
@@ -37,10 +50,12 @@ func getHTTPClient(p *Provider) *http.Client {
 			transport.Dial = dialer.Dial
 		}
 	}
-	return &http.Client{
+	c := &http.Client{
 		Timeout:   5 * time.Minute,
 		Transport: transport,
 	}
+	proxyClients.m[cacheKey] = c
+	return c
 }
 
 // proxyRequest 处理所有代理请求
@@ -55,7 +70,13 @@ func proxyRequest(w http.ResponseWriter, r *http.Request, clientFormat string, p
 
 	// 解析请求判断是否流式
 	var params map[string]any
-	json.Unmarshal(body, &params)
+	if err := json.Unmarshal(body, &params); err != nil {
+		writeError(w, clientFormat, http.StatusBadRequest, "invalid JSON body: "+err.Error())
+		return
+	}
+	if params == nil {
+		params = map[string]any{}
+	}
 	isStream, _ := params["stream"].(bool)
 	model, _ := params["model"].(string)
 
@@ -176,6 +197,8 @@ func proxyRequest(w http.ResponseWriter, r *http.Request, clientFormat string, p
 		writeError(w, clientFormat, http.StatusInternalServerError, "create request: "+err.Error())
 		return
 	}
+	// 绑定客户端 Context：客户端断开时自动取消上游请求，避免资源泄漏
+	req = req.WithContext(r.Context())
 
 	// 设置请求头
 	req.Header.Set("Content-Type", "application/json")

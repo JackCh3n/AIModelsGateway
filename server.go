@@ -47,15 +47,26 @@ func startServer(port int) error {
 	}))
 
 	// 管理后台
-registerAdminRoutes(mux)
+	registerAdminRoutes(mux)
 
-// 静态文件服务（Chart.js 等）
-mux.Handle("/static/", http.StripPrefix("/static/", http.FileServer(http.Dir("static"))))
+	// 静态文件服务（Chart.js 等）
+	mux.Handle("/static/", http.StripPrefix("/static/", http.FileServer(http.Dir("static"))))
 
 	// API Key 鉴权中间件
-	authMiddleware := func(next http.HandlerFunc, clientFormat string) http.HandlerFunc {
+	// allowMethods: 允许的 HTTP 方法（默认 POST）
+	authMiddleware := func(next http.HandlerFunc, clientFormat string, allowMethods ...string) http.HandlerFunc {
+		if len(allowMethods) == 0 {
+			allowMethods = []string{"POST"}
+		}
 		return corsHandler(func(w http.ResponseWriter, r *http.Request) {
-			if r.Method != "POST" {
+			methodOK := false
+			for _, m := range allowMethods {
+				if r.Method == m {
+					methodOK = true
+					break
+				}
+			}
+			if !methodOK {
 				writeError(w, clientFormat, http.StatusMethodNotAllowed, "method not allowed")
 				return
 			}
@@ -142,7 +153,7 @@ mux.Handle("/static/", http.StripPrefix("/static/", http.FileServer(http.Dir("st
 			}
 		}
 		writeJSON(w, http.StatusOK, map[string]any{"object": "list", "data": models})
-	}, "openai")
+	}, "openai", "GET", "POST")
 	mux.HandleFunc("/v1/models", modelsHandler)
 	mux.HandleFunc("/models", modelsHandler)
 

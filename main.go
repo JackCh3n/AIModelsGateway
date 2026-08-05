@@ -22,7 +22,6 @@ func main() {
 
 	if err := startServer(*port); err != nil {
 		log.Fatalf("服务器启动失败: %v", err)
-		os.Exit(1)
 	}
 }
 

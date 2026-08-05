@@ -129,8 +129,8 @@ func dbGetUsageStats() map[string]any {
 		"totalTokens": totalAll,
 		"totalReqs":   totalReqs,
 		"byProvider":  byProvider,
-		"byModel":      byModel,
-		"byDate":       byDate,
+		"byModel":     byModel,
+		"byDate":      byDate,
 	}
 }
 
@@ -204,7 +204,7 @@ func emptyStats() map[string]any {
 		"totalTokens": 0,
 		"totalReqs":   0,
 		"byProvider":  map[string]map[string]int64{},
-		"byModel":      map[string]map[string]int64{},
-		"byDate":       map[string]map[string]int64{},
+		"byModel":     map[string]map[string]int64{},
+		"byDate":      map[string]map[string]int64{},
 	}
 }
