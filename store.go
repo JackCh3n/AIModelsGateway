@@ -15,7 +15,7 @@ import (
 
 var (
 	config   *Config
-	configMu sync.Mutex
+	configMu sync.RWMutex // 读写锁：请求路径并发读，管理操作写
 	cfgPath  string
 )
 
@@ -27,9 +27,19 @@ func init() {
 }
 
 func loadConfig() *Config {
+	// 快速读路径：配置已加载时用 RLock 允许并发读
+	configMu.RLock()
+	if config != nil {
+		cfg := config
+		configMu.RUnlock()
+		return cfg
+	}
+	configMu.RUnlock()
+
+	// 慢路径：首次加载需要写锁
 	configMu.Lock()
 	defer configMu.Unlock()
-
+	// double-check：防止多个 goroutine 同时进入慢路径
 	if config != nil {
 		return config
 	}
@@ -335,7 +345,8 @@ func pickAPIKey(p *Provider) string {
 		return activeKeys[0]
 	}
 	keyRotMu.Lock()
-	idx := keyRotation[p.ID]
+	// 防越界：key 被删除后 idx 可能 >= len(activeKeys)，用取模修正
+	idx := keyRotation[p.ID] % len(activeKeys)
 	keyRotation[p.ID] = (idx + 1) % len(activeKeys)
 	keyRotMu.Unlock()
 	return activeKeys[idx]
@@ -492,19 +503,67 @@ func getAliasByModel(model string) *ModelAlias {
 
 // --- Usage ---
 
-func addUsageLog(logEntry UsageLog) {
-	// 写入 SQLite
-	dbAddUsageLog(logEntry)
-	// 更新 provider 统计（仍用 config）
-	cfg := loadConfig()
-	for i := range cfg.Providers {
-		if cfg.Providers[i].ID == logEntry.ProviderID {
-			cfg.Providers[i].UsageCount++
-			cfg.Providers[i].TotalTokens += int64(logEntry.TotalTokens)
-			break
+// usageLogCh 异步写入 channel：请求路径不再同步写文件，大幅提升并发能力
+var usageLogCh = make(chan UsageLog, 4096)
+
+func init() {
+	go usageLogWorker()
+}
+
+// usageLogWorker 后台批量写入 SQLite，每 3 秒或满 200 条刷一次
+func usageLogWorker() {
+	ticker := time.NewTicker(3 * time.Second)
+	defer ticker.Stop()
+	batch := make([]UsageLog, 0, 200)
+	flush := func() {
+		if len(batch) == 0 {
+			return
+		}
+		dbBatchInsertUsageLogs(batch)
+		batch = batch[:0]
+	}
+	for {
+		select {
+		case entry := <-usageLogCh:
+			batch = append(batch, entry)
+			if len(batch) >= 200 {
+				flush()
+			}
+		case <-ticker.C:
+			flush()
 		}
 	}
-	saveConfig()
+}
+
+// addUsageLog 异步记录用量（非阻塞），不会拖慢请求路径
+func addUsageLog(logEntry UsageLog) {
+	select {
+	case usageLogCh <- logEntry:
+	default:
+		// channel 满时降级为同步写入，避免丢失数据
+		dbAddUsageLog(logEntry)
+	}
+}
+
+// flushUsageLogs 刷盘待写入的用量日志（用于优雅关闭时调用）
+func flushUsageLogs() {
+	// 排空 channel
+	batch := make([]UsageLog, 0, 200)
+	for {
+		select {
+		case entry := <-usageLogCh:
+			batch = append(batch, entry)
+			if len(batch) >= 200 {
+				dbBatchInsertUsageLogs(batch)
+				batch = batch[:0]
+			}
+		default:
+			if len(batch) > 0 {
+				dbBatchInsertUsageLogs(batch)
+			}
+			return
+		}
+	}
 }
 
 func getUsageStats() map[string]any {

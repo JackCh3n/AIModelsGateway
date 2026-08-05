@@ -28,6 +28,10 @@ func initDB() {
 			log.Printf("sqlite open error: %v", err)
 			return
 		}
+		// 连接池配置：WAL 模式下读写不互斥，可支持较高并发
+		d.SetMaxOpenConns(50)
+		d.SetMaxIdleConns(10)
+		d.SetConnMaxLifetime(30 * time.Minute)
 		db = d
 		// 创建表
 		_, err = db.Exec(`CREATE TABLE IF NOT EXISTS usage_logs (
@@ -66,6 +70,37 @@ func dbAddUsageLog(entry UsageLog) {
 	)
 	if err != nil {
 		log.Printf("sqlite insert error: %v", err)
+	}
+}
+
+// dbBatchInsertUsageLogs 批量写入用量日志，减少事务开销提升吞吐
+func dbBatchInsertUsageLogs(entries []UsageLog) {
+	initDB()
+	if db == nil || len(entries) == 0 {
+		return
+	}
+	tx, err := db.Begin()
+	if err != nil {
+		log.Printf("sqlite batch begin tx error: %v", err)
+		// 降级为逐条写入
+		for _, e := range entries {
+			dbAddUsageLog(e)
+		}
+		return
+	}
+	stmt, err := tx.Prepare("INSERT OR IGNORE INTO usage_logs(id,provider_id,provider_name,model,input_tokens,output_tokens,total_tokens,client_format,timestamp) VALUES(?,?,?,?,?,?,?,?,?)")
+	if err != nil {
+		tx.Rollback()
+		log.Printf("sqlite batch prepare error: %v", err)
+		return
+	}
+	defer stmt.Close()
+	for _, e := range entries {
+		_, _ = stmt.Exec(e.ID, e.ProviderID, e.ProviderName, e.Model,
+			e.InputTokens, e.OutputTokens, e.TotalTokens, e.ClientFormat, e.Timestamp)
+	}
+	if err := tx.Commit(); err != nil {
+		log.Printf("sqlite batch commit error: %v", err)
 	}
 }
 

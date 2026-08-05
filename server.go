@@ -1,11 +1,15 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
+	"os"
+	"os/signal"
 	"strings"
+	"syscall"
 	"time"
 )
 
@@ -177,12 +181,35 @@ func startServer(port int) error {
 	fmt.Println(strings.Repeat("=", 56))
 
 	server := &http.Server{
-		Addr:    addr,
-		Handler: mux,
+		Addr:              addr,
+		Handler:           mux,
+		ReadHeaderTimeout: 10 * time.Second, // 防止 slowloris 攻击
+		ReadTimeout:       30 * time.Second,
+		WriteTimeout:      5 * time.Minute,  // 兼容流式响应
+		IdleTimeout:       120 * time.Second,
+		MaxHeaderBytes:    1 << 20,          // 1MB
 	}
 
+	// 优雅关闭：收到信号后等待活跃连接结束，刷盘用量日志
+	go func() {
+		quit := make(chan os.Signal, 1)
+		signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
+		<-quit
+		log.Printf("收到关闭信号，正在优雅关闭...")
+		flushUsageLogs()
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		if err := server.Shutdown(ctx); err != nil {
+			log.Printf("强制关闭: %v", err)
+		}
+	}()
+
 	log.Printf("服务器启动: %s", addr)
-	return server.ListenAndServe()
+	if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		return err
+	}
+	log.Printf("服务器已关闭")
+	return nil
 }
 
 // adminPageHandler 返回管理后台页面

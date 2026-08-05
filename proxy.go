@@ -16,8 +16,21 @@ import (
 	"golang.org/x/net/proxy"
 )
 
+// newDefaultTransport 创建优化过的 Transport，复用 TCP 连接提升并发能力
+func newDefaultTransport() *http.Transport {
+	return &http.Transport{
+		MaxIdleConns:          500,             // 全局最大空闲连接
+		MaxIdleConnsPerHost:   100,             // 每个 host 的最大空闲连接（默认仅 2，是并发瓶颈）
+		IdleConnTimeout:       90 * time.Second,
+		TLSHandshakeTimeout:   10 * time.Second,
+		ExpectContinueTimeout: 1 * time.Second,
+		ResponseHeaderTimeout: 30 * time.Second,
+	}
+}
+
 var httpClient = &http.Client{
-	Timeout: 5 * time.Minute,
+	Timeout:   5 * time.Minute,
+	Transport: newDefaultTransport(),
 }
 
 // 代理 HTTP Client 缓存：按 (enabled,type,addr) 复用 Transport，避免每次请求新建连接
@@ -37,7 +50,7 @@ func getHTTPClient(p *Provider) *http.Client {
 	if c, ok := proxyClients.m[cacheKey]; ok {
 		return c
 	}
-	transport := &http.Transport{}
+	transport := newDefaultTransport()
 	switch p.ProxyType {
 	case "http", "https":
 		proxyURL, err := url.Parse(p.ProxyType + "://" + p.ProxyAddr)
