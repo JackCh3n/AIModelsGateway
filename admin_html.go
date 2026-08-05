@@ -2173,24 +2173,22 @@ toast('保存失败','error');
 }
 }
 
-// 测试 Redis 连接
+// 测试 Redis 连接（不改变当前狂暴模式状态，仅验证连通性）
 async function testRedisConnection(){
 const addr=document.getElementById('redisAddrInput').value.trim();
 if(!addr){toast('请输入 Redis 地址','error');return;}
 const result=document.getElementById('rageTestResult');
 result.innerHTML='<span class="loading"></span> 连接中...';
 try{
-const res=await fetch(API+'/settings',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({
-activeProviderId:activeProviderId,inputPresets:inputPresets,outputPresets:outputPresets,
-rageMode:true,redisAddr:addr,redisPassword:document.getElementById('redisPasswordInput').value,redisDb:parseInt(document.getElementById('redisDBInput').value)||0
+const res=await fetch(API+'/test-redis',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({
+addr:addr,password:document.getElementById('redisPasswordInput').value,db:parseInt(document.getElementById('redisDBInput').value)||0
 })});
-if(res.ok){
 const data=await res.json();
-updateRageStatus(data.rageMode);
-result.innerHTML='<div class="test-result test-success">✅ Redis 连接成功，狂暴模式已启用</div>';
+if(data.ok){
+result.innerHTML='<div class="test-result test-success">✅ Redis 连接成功，可勾选"启用"并点击"保存并应用"开启狂暴模式</div>';
 toast('Redis 连接成功','success');
 }else{
-result.innerHTML='<div class="test-result test-error">❌ 连接失败，请检查地址和密码</div>';
+result.innerHTML='<div class="test-result test-error">❌ 连接失败：'+esc(data.error||'请检查地址和密码')+'</div>';
 toast('连接失败','error');
 }
 }catch(e){

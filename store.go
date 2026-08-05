@@ -659,8 +659,14 @@ func getSettings() Settings {
 
 func updateSettings(s Settings) {
 	oldRage := false
+	oldRedisAddr := ""
+	oldRedisPwd := ""
+	oldRedisDB := 0
 	mutateConfig(func(cfg *Config) {
 		oldRage = cfg.Settings.RageMode
+		oldRedisAddr = cfg.Settings.RedisAddr
+		oldRedisPwd = cfg.Settings.RedisPassword
+		oldRedisDB = cfg.Settings.RedisDB
 		cfg.Settings.ActiveProviderID = s.ActiveProviderID
 		cfg.Settings.DefaultModel = s.DefaultModel
 		if len(s.InputPresets) > 0 {
@@ -674,11 +680,20 @@ func updateSettings(s Settings) {
 		cfg.Settings.RedisPassword = s.RedisPassword
 		cfg.Settings.RedisDB = s.RedisDB
 	})
-	// 狂暴模式切换：开 -> 连 Redis；关 -> 断 Redis
+	// 狂暴模式切换：开 -> 连 Redis；关 -> 断 Redis；地址变更 -> 重连
+	redisChanged := s.RedisAddr != oldRedisAddr || s.RedisPassword != oldRedisPwd || s.RedisDB != oldRedisDB
 	if s.RageMode && !oldRage {
+		// 开启：初始化 Redis + 加大连接池
 		go initRedis(s.RedisAddr, s.RedisPassword, s.RedisDB)
 	} else if !s.RageMode && oldRage {
+		// 关闭：刷盘 + 断开 Redis + 恢复普通连接池
 		go closeRedis()
+	} else if s.RageMode && oldRage && redisChanged {
+		// 已启用但 Redis 配置变更：先关再开（复用刷盘逻辑避免丢数据）
+		go func() {
+			closeRedis()
+			initRedis(s.RedisAddr, s.RedisPassword, s.RedisDB)
+		}()
 	}
 }
 

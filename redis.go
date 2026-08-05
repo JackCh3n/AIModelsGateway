@@ -64,16 +64,39 @@ func initRedis(addr, password string, db int) {
 	log.Printf("[redis] 已连接（狂暴模式启用）: %s db=%d", addr, db)
 }
 
+// testRedisConnection 仅测试 Redis 连接是否可用，不改变当前狂暴模式状态
+func testRedisConnection(addr, password string, db int) error {
+	c := redis.NewClient(&redis.Options{
+		Addr:        addr,
+		Password:    password,
+		DB:          db,
+		PoolSize:    2,
+		DialTimeout: 3 * time.Second,
+		ReadTimeout: 2 * time.Second,
+	})
+	defer c.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	return c.Ping(ctx).Err()
+}
+
 // closeRedis 关闭 Redis 连接（狂暴模式关闭时调用）
+// 顺序：先标记禁用（阻止新数据入 channel）-> 刷盘待写入统计 -> 关闭连接 -> 恢复普通连接池
 func closeRedis() {
 	redisMu.Lock()
-	defer redisMu.Unlock()
+	redisEnabled = false // 先标记禁用，redisIncrUsage 不再投递
+	redisMu.Unlock()
 
+	// 刷盘 channel 中待写入的统计（避免丢数据）
+	flushRedisLogs()
+
+	redisMu.Lock()
 	if rdb != nil {
 		rdb.Close()
 		rdb = nil
 	}
-	redisEnabled = false
+	redisMu.Unlock()
+
 	restoreNormalPool()
 	log.Printf("[redis] 已断开（恢复普通模式）")
 }
@@ -119,12 +142,16 @@ func redisWorker() {
 }
 
 // processRedisBatch 批量执行 Pipeline：聚合同 key+field 的增量，减少命令数
+// 注意：不检查 redisEnabled，仅检查 rdb，以便 closeRedis 时刷盘待写入统计
 func processRedisBatch(batch []UsageLog) {
-	if !redisEnabled || rdb == nil || len(batch) == 0 {
+	redisMu.Lock()
+	client := rdb
+	redisMu.Unlock()
+	if client == nil || len(batch) == 0 {
 		return
 	}
 	ctx := context.Background()
-	pipe := rdb.Pipeline()
+	pipe := client.Pipeline()
 	// 聚合：同一 (key, field) 累加，减少 HIncrBy 命令数
 	type agg struct {
 		count               int64

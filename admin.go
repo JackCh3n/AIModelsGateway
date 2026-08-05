@@ -303,6 +303,32 @@ func registerAdminRoutes(mux *http.ServeMux) {
 		}
 	}))
 
+	// 测试 Redis 连接（不改变当前狂暴模式状态）
+	mux.HandleFunc("/admin/api/test-redis", corsHandler(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+			return
+		}
+		var body struct {
+			Addr     string `json:"addr"`
+			Password string `json:"password"`
+			DB       int    `json:"db"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		if body.Addr == "" {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "addr is empty"})
+			return
+		}
+		if err := testRedisConnection(body.Addr, body.Password, body.DB); err != nil {
+			writeJSON(w, http.StatusOK, map[string]any{"ok": false, "error": err.Error()})
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+	}))
+
 	// 测试站点 key 和模型
 	mux.HandleFunc("/admin/api/test", corsHandler(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != "POST" {
