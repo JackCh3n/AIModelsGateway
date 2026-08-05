@@ -342,7 +342,8 @@ tr:hover{background:var(--hover)}
 <input class="input" id="provKeyInput" placeholder="sk-... 回车或逗号分隔添加多个" style="flex:1" oninput="this.value=this.value.trim()" onkeydown="handleKeyKeydown(event)">
 <input class="input" id="provKeyName" placeholder="备注(可选)" style="width:120px">
 <button class="btn btn-outline" onclick="addProvKey()">添加</button>
-<button class="btn btn-outline" onclick="clearProvKeys()">🗑 一键清空</button>
+<button class="btn btn-outline" onclick="decodeProvKeyInput()" title="将输入框中的 Base64 内容解码为 Key">🔓 解码</button>
+<button class="btn btn-outline" onclick="clearProvKeys()">🗑 清空</button>
 </div>
 <div style="display:flex;gap:8px;align-items:center">
 <label style="font-size:13px;color:var(--muted);display:flex;align-items:center;gap:4px;cursor:pointer"><input type="checkbox" id="provKeySelectAll" onchange="toggleAllKeys(this.checked)"> 全选</label>
@@ -846,6 +847,37 @@ html+='<div class="test-error" style="padding:8px;margin-bottom:6px;font-size:12
 }
 content.innerHTML=html;
 }
+// 将输入框中的 Base64 内容解码为 Key，兼容逗号/分号分隔的多个值
+function decodeProvKeyInput(){
+const keyInput=document.getElementById('provKeyInput');
+const raw=keyInput.value.trim();
+if(!raw){toast('请输入需要解码的内容','error');return;}
+const seps=/[,，;；]/;
+const parts=raw.split(seps);
+const out=[];
+let errCount=0;
+parts.forEach(p=>{
+p=p.trim();
+if(!p)return;
+try{
+const bytes=Uint8Array.from(atob(p),c=>c.charCodeAt(0));
+const decoded=new TextDecoder().decode(bytes);
+if(decoded)out.push(decoded);
+else errCount++;
+}catch(e){
+errCount++;
+}
+});
+if(out.length===0){
+toast('解码失败：内容不是有效的 Base64','error');
+return;
+}
+keyInput.value=out.join(',');
+if(errCount>0)toast('解码完成，其中 '+errCount+' 项无效被跳过','success');
+else toast('解码完成，共 '+out.length+' 项','success');
+keyInput.focus();
+}
+
 function addProvKey(){
 const keyInput=document.getElementById('provKeyInput');
 const nameInput=document.getElementById('provKeyName');
