@@ -823,7 +823,8 @@ const modal=document.getElementById('modelTestModal');
 const content=document.getElementById('modelTestContent');
 modal.classList.add('show');
 content.innerHTML='<div class="empty"><span class="loading"></span> 正在检测 '+editingKeys.length+' 个 Key ...</div>';
-let ok=0,fail=0,failList=[];
+// 检测结果：与 editingKeys 下标对应 {ok:bool, reason:string}
+const results=[];
 for(let i=0;i<editingKeys.length;i++){
 const k=editingKeys[i];
 content.innerHTML='<div class="empty">正在检测 <strong>'+esc(k.key.substring(0,8)+'...')+'</strong> ('+(i+1)+'/'+editingKeys.length+')<br><div class="loading" style="margin-top:8px"></div></div>';
@@ -836,18 +837,72 @@ proxyType:document.getElementById('provProxyType').value,
 proxyAddr:document.getElementById('provProxyAddr').value.trim()
 })});
 const data=await res.json();
-if(data.success){ok++;}else{fail++;failList.push({key:k.key,reason:data.error||'失败'});}
-}catch(e){fail++;failList.push({key:k.key,reason:e.message});}
+results.push({ok:!!data.success,reason:data.success?'':(data.error||'失败')});
+}catch(e){results.push({ok:false,reason:e.message});}
 }
-let html='<div style="margin-bottom:12px"><strong>检测完成</strong> (HTTP '+editingKeys.length+' 个)</div>';
-html+='<div style="margin-bottom:8px"><span class="badge badge-active">可用 '+ok+'</span> <span class="badge badge-disabled" style="margin-left:4px">不可用 '+fail+'</span></div>';
-if(failList.length){
-html+='<div style="font-size:13px;color:var(--muted);margin-bottom:4px">不可用明细</div>';
-failList.forEach(f=>{
-html+='<div class="test-error" style="padding:8px;margin-bottom:6px;font-size:12px"><span class="mono">'+esc(f.key.substring(0,12)+'...')+'</span><br>'+esc(f.reason)+'</div>';
+// 保存检测结果到全局，供筛选/禁用使用
+window._keyTestResults=results;
+window._keyTestFilter='all';
+renderKeyTestResult(content,results);
+}
+
+// 渲染批量检测结果页面
+function renderKeyTestResult(content,results){
+const okCount=results.filter(r=>r.ok).length;
+const failCount=results.filter(r=>!r.ok).length;
+const filter=window._keyTestFilter||'all';
+let html='<div style="margin-bottom:12px"><strong>检测完成</strong> (共 '+results.length+' 个 Key)</div>';
+html+='<div style="margin-bottom:8px;display:flex;align-items:center;gap:8px;flex-wrap:wrap">';
+html+='<button class="copy-btn" onclick="setKeyTestFilter(\'all\')" style="'+(filter==='all'?'background:var(--accent);color:#fff;border-color:var(--accent)':'')+'">全部 '+results.length+'</button>';
+html+='<button class="copy-btn" onclick="setKeyTestFilter(\'ok\')" style="'+(filter==='ok'?'background:var(--accent);color:#fff;border-color:var(--accent)':'')+'">可用 '+okCount+'</button>';
+html+='<button class="copy-btn" onclick="setKeyTestFilter(\'fail\')" style="'+(filter==='fail'?'background:var(--accent);color:#fff;border-color:var(--accent)':'')+'">不可用 '+failCount+'</button>';
+html+='</div>';
+// 汇总行
+const failIndexes=[];
+results.forEach((r,i)=>{if(!r.ok)failIndexes.push(i);});
+html+='<div style="margin-bottom:8px;padding:8px;background:var(--bg);border-radius:4px;font-size:13px">';
+html+='<span class="badge badge-active">可用 '+okCount+'</span> <span class="badge badge-disabled" style="margin-left:4px">不可用 '+failCount+'</span>';
+html+='<button class="btn btn-sm btn-danger" style="margin-left:12px" onclick="disableKeyTestFails()">🚫 禁用不可用Key</button>';
+html+='</div>';
+// 列表
+html+='<div style="font-size:13px;color:var(--muted);margin-bottom:4px">Key 明细</div>';
+results.forEach((r,i)=>{
+if(filter==='ok'&&!r.ok)return;
+if(filter==='fail'&&r.ok)return;
+const k=editingKeys[i];
+const cls=r.ok?'test-success':'test-error';
+html+='<div class="'+cls+'" style="padding:8px;margin-bottom:6px;font-size:12px">';
+html+='<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">';
+html+='<span class="mono" style="flex:1;word-break:break-all">'+esc(k.key.substring(0,16))+(k.key.length>16?'...':'')+'</span>';
+html+='<span class="badge badge-'+(r.ok?'active':'disabled')+'">'+(r.ok?'可用':'不可用')+'</span>';
+if(!r.ok){
+html+='<label style="display:flex;align-items:center;gap:4px;cursor:pointer;font-size:12px"><input type="checkbox" id="keyFailSel_'+i+'" checked> 禁用</label>';
+}
+html+='</div>';
+if(!r.ok&&r.reason)html+='<div style="margin-top:4px;color:var(--muted)">'+esc(r.reason)+'</div>';
+html+='</div>';
 });
-}
 content.innerHTML=html;
+}
+
+// 切换结果筛选
+function setKeyTestFilter(f){
+window._keyTestFilter=f;
+renderKeyTestResult(document.getElementById('modelTestContent'),window._keyTestResults||[]);
+}
+
+// 禁用检测不可用的 Key（勾选的）
+async function disableKeyTestFails(){
+const results=window._keyTestResults||[];
+let count=0;
+results.forEach((r,i)=>{
+if(!r.ok&&document.getElementById('keyFailSel_'+i)&&document.getElementById('keyFailSel_'+i).checked){
+if(editingKeys[i]){editingKeys[i].status='disabled';count++;}
+}
+});
+if(count===0){toast('没有勾选需要禁用的不可用Key','error');return;}
+renderKeyList();
+toast('已禁用 '+count+' 个不可用Key','success');
 }
 // 将输入框中的 Base64 内容解码为 Key，兼容逗号/分号分隔的多个值
 function decodeProvKeyInput(){
