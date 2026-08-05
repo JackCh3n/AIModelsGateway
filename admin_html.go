@@ -152,6 +152,8 @@ tr:hover{background:var(--hover)}
 <div style="display:flex;gap:8px;align-items:center;margin-bottom:12px">
 <label style="font-size:13px;color:var(--muted);display:flex;align-items:center;gap:4px;cursor:pointer"><input type="checkbox" id="provSelectAll" onchange="toggleAllProviders(this.checked)"> 全选</label>
 <span class="badge badge-active" id="provSelCount">已选 0</span>
+<button class="btn btn-sm btn-success" onclick="batchSetProviders('active')">✅ 启用</button>
+<button class="btn btn-sm btn-danger" onclick="batchSetProviders('disabled')">⏸️ 禁用</button>
 <button class="btn btn-sm btn-outline" onclick="testAllProviders()">⚡ 一键检测</button>
 <button class="btn btn-sm btn-outline" onclick="batchDeleteProviders()">🗑 批量删除</button>
 </div>
@@ -345,6 +347,8 @@ tr:hover{background:var(--hover)}
 <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
 <label style="font-size:13px;color:var(--muted);display:flex;align-items:center;gap:4px;cursor:pointer"><input type="checkbox" id="provKeySelectAll" onchange="toggleAllKeys(this.checked)"> 全选</label>
 <span class="badge badge-active" id="provKeySelCount">已选 0</span>
+<button class="btn btn-outline btn-sm" onclick="batchSetKeys('active')">✅ 启用</button>
+<button class="btn btn-outline btn-sm" onclick="batchSetKeys('disabled')">⏸️ 禁用</button>
 <button class="btn btn-outline btn-sm" onclick="batchDeleteKeys()">🗑 批量删除</button>
 <button class="btn btn-outline btn-sm" onclick="testAllProvKeys()">⚡ 一键检测</button>
 <button class="btn btn-outline btn-sm" onclick="decodeProvKeyInput()" title="将输入框中的 Base64 内容解码为 Key">🔓 Base64编码</button>
@@ -852,6 +856,15 @@ const cnt=document.getElementById('provKeySelCount');
 if(all)all.checked=editingKeys.length>0&&adminKeySelected.size===editingKeys.length;
 if(cnt)cnt.textContent='已选 '+adminKeySelected.size;
 }
+function batchSetKeys(status){
+if(adminKeySelected.size===0){toast('未选择任何 Key','error');return;}
+let count=0;
+adminKeySelected.forEach(i=>{
+if(editingKeys[i]){editingKeys[i].status=status;count++;}
+});
+renderKeyList();
+toast('已'+(status==='active'?'启用':'禁用')+' '+count+' 个 Key','success');
+}
 function batchDeleteKeys(){
 if(adminKeySelected.size===0){toast('未选择任何 Key','error');return;}
 if(!confirm('确定删除选中的 '+adminKeySelected.size+' 个 Key 吗？'))return;
@@ -1094,6 +1107,19 @@ const all=document.getElementById('provSelectAll');
 const cnt=document.getElementById('provSelCount');
 if(all)all.checked=allProvidersCache.length>0&&adminProvSelected.size===allProvidersCache.length;
 if(cnt)cnt.textContent='已选 '+adminProvSelected.size;
+}
+async function batchSetProviders(status){
+if(adminProvSelected.size===0){toast('未选择任何中转站','error');return;}
+let ok=0,fail=0;
+for(const id of adminProvSelected){
+const p=allProvidersCache.find(x=>x.id===id);
+if(!p){fail++;continue;}
+const body={...p,status:status};
+const res=await fetch(API+'/providers/'+id,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+if(res.ok)ok++;else fail++;
+}
+toast('已'+(status==='active'?'启用':'禁用')+' '+ok+' 个，失败 '+fail+' 个','success');
+loadProviders();
 }
 async function batchDeleteProviders(){
 if(adminProvSelected.size===0){toast('未选择任何中转站','error');return;}
