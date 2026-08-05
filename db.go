@@ -109,7 +109,10 @@ func dbGetUsageStats() map[string]any {
 	}
 
 	// 按日期
-	rows, err = db.Query("SELECT date(timestamp),COALESCE(SUM(input_tokens),0),COALESCE(SUM(output_tokens),0),COALESCE(SUM(total_tokens),0),COUNT(*) FROM usage_logs GROUP BY date(timestamp) ORDER BY date(timestamp) DESC")
+	// 注意：SQLite 的 date() 函数无法解析带时区偏移和纳秒的时间戳格式
+	// (如 2026-08-05T01:10:41.8356031+08:00)，会返回 NULL。
+	// 因此改用 substr 提取前 10 位日期 (YYYY-MM-DD)。
+	rows, err = db.Query("SELECT substr(timestamp,1,10),COALESCE(SUM(input_tokens),0),COALESCE(SUM(output_tokens),0),COALESCE(SUM(total_tokens),0),COUNT(*) FROM usage_logs GROUP BY substr(timestamp,1,10) ORDER BY substr(timestamp,1,10) DESC")
 	if err == nil {
 		for rows.Next() {
 			var date string
