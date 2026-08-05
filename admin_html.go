@@ -149,6 +149,12 @@ tr:hover{background:var(--hover)}
 <div class="panel active" id="panel-providers">
 <div class="card">
 <div class="card-title">中转站列表 <div style="display:flex;gap:8px"><button class="btn btn-outline" onclick="importProvider()">导入配置</button><button class="btn btn-outline" onclick="showOpenCodeModal()">导入OpenCode</button><button class="btn btn-primary" onclick="showProviderModal()">+ 添加中转站</button></div></div>
+<div style="display:flex;gap:8px;align-items:center;margin-bottom:12px">
+<label style="font-size:13px;color:var(--muted);display:flex;align-items:center;gap:4px;cursor:pointer"><input type="checkbox" id="provSelectAll" onchange="toggleAllProviders(this.checked)"> 全选</label>
+<span class="badge badge-active" id="provSelCount">已选 0</span>
+<button class="btn btn-sm btn-outline" onclick="testAllProviders()">⚡ 一键检测</button>
+<button class="btn btn-sm btn-outline" onclick="batchDeleteProviders()">🗑 批量删除</button>
+</div>
 <div id="providerList"></div>
 <input type="file" id="importFile" accept=".json" style="display:none" onchange="handleImportFile(event)">
 </div>
@@ -936,6 +942,77 @@ content.innerHTML='<div class="test-error">请求失败: '+esc(e.message)+'</div
 }
 
 // --- Providers ---
+let adminProvSelected=new Set();
+function toggleProviderSelect(id,checked){
+if(checked)adminProvSelected.add(id);else adminProvSelected.delete(id);
+updateProvSelUI();
+}
+function toggleAllProviders(checked){
+adminProvSelected.clear();
+if(checked){allProvidersCache.forEach(p=>adminProvSelected.add(p.id));}
+updateProvSelUI();
+}
+function updateProvSelUI(){
+const all=document.getElementById('provSelectAll');
+const cnt=document.getElementById('provSelCount');
+if(all)all.checked=allProvidersCache.length>0&&adminProvSelected.size===allProvidersCache.length;
+if(cnt)cnt.textContent='已选 '+adminProvSelected.size;
+}
+async function batchDeleteProviders(){
+if(adminProvSelected.size===0){toast('未选择任何中转站','error');return;}
+if(!confirm('确定删除选中的 '+adminProvSelected.size+' 个中转站吗？'))return;
+let ok=0,fail=0;
+for(const id of adminProvSelected){
+const res=await fetch(API+'/providers/'+id,{method:'DELETE'});
+if(res.ok)ok++;else fail++;
+}
+adminProvSelected.clear();
+toast('已删除 '+ok+' 个，失败 '+fail+' 个','success');
+loadProviders();
+}
+// 设置中转站状态 (active/disabled)，复用完整 provider 对象
+async function setProviderStatus(id,status){
+const p=allProvidersCache.find(x=>x.id===id);
+if(!p)return false;
+const body={...p,status:status};
+const res=await fetch(API+'/providers/'+id,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+return res.ok;
+}
+// 一键检测所有中转站是否正常，不正常自动改为不可用
+async function testAllProviders(){
+if(!allProvidersCache.length){toast('没有中转站可检测','error');return;}
+const modal=document.getElementById('modelTestModal');
+const content=document.getElementById('modelTestContent');
+modal.classList.add('show');
+content.innerHTML='<div class="empty"><span class="loading"></span> 正在检测 '+allProvidersCache.length+' 个中转站 ...</div>';
+let ok=0,fail=0,needFix=[];
+for(let i=0;i<allProvidersCache.length;i++){
+const p=allProvidersCache[i];
+content.innerHTML='<div class="empty">正在检测 <strong>'+esc(p.name)+'</strong> ('+(i+1)+'/'+allProvidersCache.length+')<br><div class="loading" style="margin-top:8px"></div></div>';
+try{
+const res=await fetch(API+'/providers/test/'+p.id,{method:'POST'});
+const data=await res.json();
+if(data&&data.success){ok++;}
+else{fail++;needFix.push({id:p.id,name:p.name,reason:(data&&data.error)||'不可用'});}
+}catch(e){fail++;needFix.push({id:p.id,name:p.name,reason:e.message});}
+}
+// 将检测失败的中转站状态改为不可用
+let fixed=0;
+for(const f of needFix){
+if(f.id){if(await setProviderStatus(f.id,'disabled'))fixed++;}
+}
+let html='<div style="margin-bottom:12px"><strong>检测完成</strong> (共 '+allProvidersCache.length+' 个)</div>';
+html+='<div style="margin-bottom:8px"><span class="badge badge-active">正常 '+ok+'</span> <span class="badge badge-disabled" style="margin-left:4px">异常 '+fail+'</span></div>';
+if(fail>0)html+='<div style="font-size:13px;color:var(--muted);margin-bottom:4px">已自动将 '+fixed+' 个异常站点状态改为不可用</div>';
+if(needFix.length){
+html+='<div style="font-size:13px;color:var(--muted);margin-bottom:4px">异常明细</div>';
+needFix.forEach(f=>{
+html+='<div class="test-error" style="padding:8px;margin-bottom:6px;font-size:12px"><strong>'+esc(f.name)+'</strong><br>'+esc(f.reason)+'</div>';
+});
+}
+content.innerHTML=html;
+loadProviders();
+}
 async function loadProviders(){
 const res=await fetch(API+'/providers');
 const data=await res.json();
@@ -951,7 +1028,7 @@ const settings=await sRes.json();
 activeProviderId=settings.activeProviderId||'';
 const defaultModel=settings.defaultModel||'';
 
-let html='<table><tr><th>名称</th><th>格式</th><th>Base URL</th><th>模型</th><th>Keys</th><th>状态</th><th>操作</th></tr>';
+let html='<table><tr><th style="width:30px"></th><th>名称</th><th>格式</th><th>Base URL</th><th>模型</th><th>Keys</th><th>状态</th><th>操作</th></tr>';
 for(const p of data){
 const isActive=p.id===activeProviderId;
 const disabledSet=new Set(p.disabledModels||[]);
@@ -959,7 +1036,9 @@ const enabledCount=(p.models||[]).filter(m=>!disabledSet.has(m)).length;
 const totalCount=(p.models||[]).length;
 const activeKeyCount=(p.apiKeys||[]).filter(k=>k.status==='active').length;
 const totalKeyCount=(p.apiKeys||[]).length;
+const checked=adminProvSelected.has(p.id)?'checked':'';
 html+='<tr onclick="toggleModels(\''+p.id+'\')" style="cursor:pointer">';
+html+='<td onclick="event.stopPropagation()"><input type="checkbox" '+checked+' onchange="toggleProviderSelect(\''+p.id+'\',this.checked)" title="选择"></td>';
 html+='<td>'+esc(p.name)+(isActive?' <span class="badge badge-current">当前</span>':'')+'</td>';
 html+='<td><span class="badge badge-'+p.format+'">'+p.format+'</span></td>';
 html+='<td class="mono">'+esc(p.baseUrl)+'</td>';
@@ -978,7 +1057,7 @@ html+='<button class="btn btn-sm btn-danger" onclick="deleteProvider(\''+p.id+'\
 html+='</td>';
 html+='</tr>';
 // 模型展开行
-html+='<tr id="models-'+p.id+'" style="display:none" onclick="event.stopPropagation()"><td colspan="7"><div class="model-row">';
+html+='<tr id="models-'+p.id+'" style="display:none" onclick="event.stopPropagation()"><td colspan="8"><div class="model-row">';
 for(const m of (p.models||[])){
 const enabled=!disabledSet.has(m);
 const isDefault=(m===p.defaultModel);
