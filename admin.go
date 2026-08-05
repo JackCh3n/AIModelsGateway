@@ -36,18 +36,18 @@ func registerAdminRoutes(mux *http.ServeMux) {
 				p.Format = "openai"
 			}
 			if p.Models == nil {
-			p.Models = []string{}
-		}
-		if p.DisabledModels == nil {
-			p.DisabledModels = []string{}
-		}
-		if p.CustomHeaders == nil {
-			p.CustomHeaders = map[string]string{}
-		}
-		if p.ModelConfigs == nil {
-			p.ModelConfigs = []ModelConfig{}
-		}
-		addProvider(p)
+				p.Models = []string{}
+			}
+			if p.DisabledModels == nil {
+				p.DisabledModels = []string{}
+			}
+			if p.CustomHeaders == nil {
+				p.CustomHeaders = map[string]string{}
+			}
+			if p.ModelConfigs == nil {
+				p.ModelConfigs = []ModelConfig{}
+			}
+			addProvider(p)
 			writeJSON(w, http.StatusOK, p)
 		default:
 			writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
@@ -123,11 +123,11 @@ func registerAdminRoutes(mux *http.ServeMux) {
 		}
 		p := getProvider(providerID)
 		writeJSON(w, http.StatusOK, map[string]any{
-			"status":          "ok",
-			"providerId":      providerID,
-			"model":           model,
-			"enabled":         isModelEnabled(p, model),
-			"disabledModels":  p.DisabledModels,
+			"status":         "ok",
+			"providerId":     providerID,
+			"model":          model,
+			"enabled":        isModelEnabled(p, model),
+			"disabledModels": p.DisabledModels,
 		})
 	}))
 
@@ -697,7 +697,7 @@ func parseOpenCodeConfig(rd io.Reader) (*Provider, error) {
 		Name:           name,
 		BaseURL:        baseURL,
 		APIKey:         apiKey,
-		APIKeys: []ProviderKey{{ID: generateID("pk"), Key: apiKey, Name: "导入", Status: "active"}},
+		APIKeys:        []ProviderKey{{ID: generateID("pk"), Key: apiKey, Name: "导入", Status: "active"}},
 		Format:         format,
 		Models:         models,
 		DisabledModels: []string{},
@@ -809,7 +809,7 @@ func testProvider(baseURL, apiKey, format, model string, customHeaders map[strin
 			"error":       truncate(respStr, 500),
 			"testUrl":     upstreamURL,
 			"testMessage": testMessage,
-			"reqHeaders":  headers,
+			"reqHeaders":  safeHeaders(headers), // 隐藏 Authorization/x-api-key，避免泄露密钥
 		}
 	}
 
@@ -836,16 +836,35 @@ func testProvider(baseURL, apiKey, format, model string, customHeaders map[strin
 	log.Printf("  test: %s %s -> %d content=%s tokens=%d/%d", baseURL, model, resp.StatusCode, truncate(content, 50), input, output)
 
 	return map[string]any{
-		"success":     true,
-		"status":      resp.StatusCode,
-		"content":     truncate(content, 200),
-		"raw":         truncate(respStr, 500),
-		"testUrl":     upstreamURL,
-		"testMessage": testMessage,
-		"reqHeaders":  headers,
-		"inputTokens": input,
+		"success":      true,
+		"status":       resp.StatusCode,
+		"content":      truncate(content, 200),
+		"raw":          truncate(respStr, 500),
+		"testUrl":      upstreamURL,
+		"testMessage":  testMessage,
+		"reqHeaders":   safeHeaders(headers), // 隐藏 Authorization/x-api-key，避免泄露密钥
+		"inputTokens":  input,
 		"outputTokens": output,
 	}
+}
+
+// safeHeaders 隐藏请求头中的敏感字段（Authorization / x-api-key），避免在接口响应中泄露密钥
+func safeHeaders(headers map[string]string) map[string]string {
+	out := make(map[string]string, len(headers))
+	for k, v := range headers {
+		lower := strings.ToLower(k)
+		switch lower {
+		case "authorization", "x-api-key", "api-key":
+			if v != "" {
+				out[k] = v[:min(len(v), 8)] + "..."
+			} else {
+				out[k] = ""
+			}
+		default:
+			out[k] = v
+		}
+	}
+	return out
 }
 
 func newHTTPRequest(method, url string, body []byte, headers map[string]string) (*http.Request, error) {

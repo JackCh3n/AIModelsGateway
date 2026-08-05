@@ -21,9 +21,9 @@ type Provider struct {
 	UsageCount     int64             `json:"usageCount"`
 	TotalTokens    int64             `json:"totalTokens"`
 	CreatedAt      time.Time         `json:"createdAt"`
-	ProxyEnabled   bool              `json:"proxyEnabled"`   // 是否启用代理
-ProxyType      string            `json:"proxyType"`      // http, https, socks5
-ProxyAddr      string            `json:"proxyAddr"`      // 代理地址，如 127.0.0.1:7890
+	ProxyEnabled   bool              `json:"proxyEnabled"` // 是否启用代理
+	ProxyType      string            `json:"proxyType"`    // http, https, socks5
+	ProxyAddr      string            `json:"proxyAddr"`    // 代理地址，如 127.0.0.1:7890
 }
 
 // ModelConfig 模型上下文配置
@@ -52,15 +52,15 @@ type APIKey struct {
 
 // UsageLog Token 用量记录
 type UsageLog struct {
-	ID            string    `json:"id"`
-	ProviderID    string    `json:"providerId"`
-	ProviderName  string    `json:"providerName"`
-	Model         string    `json:"model"`
-	InputTokens   int       `json:"inputTokens"`
-	OutputTokens  int       `json:"outputTokens"`
-	TotalTokens   int       `json:"totalTokens"`
-	Timestamp     time.Time `json:"timestamp"`
-	ClientFormat  string    `json:"clientFormat"` // openai 或 anthropic
+	ID           string    `json:"id"`
+	ProviderID   string    `json:"providerId"`
+	ProviderName string    `json:"providerName"`
+	Model        string    `json:"model"`
+	InputTokens  int       `json:"inputTokens"`
+	OutputTokens int       `json:"outputTokens"`
+	TotalTokens  int       `json:"totalTokens"`
+	Timestamp    time.Time `json:"timestamp"`
+	ClientFormat string    `json:"clientFormat"` // openai 或 anthropic
 }
 
 // Settings 全局设置
@@ -74,11 +74,11 @@ type Settings struct {
 // ModelAlias 模型路由别名
 // 客户端用固定模型名调用，网关自动路由到指定站点的指定模型
 type ModelAlias struct {
-	ID         string `json:"id"`
-	Name       string `json:"name"`       // 别名，客户端请求时用的模型名
-	ProviderID string `json:"providerId"` // 实际使用的站点 ID
+	ID           string `json:"id"`
+	Name         string `json:"name"`         // 别名，客户端请求时用的模型名
+	ProviderID   string `json:"providerId"`   // 实际使用的站点 ID
 	ProviderName string `json:"providerName"` // 显示用
-	Model      string `json:"model"`      // 实际使用的模型
+	Model        string `json:"model"`        // 实际使用的模型
 }
 
 // Config 持久化配置

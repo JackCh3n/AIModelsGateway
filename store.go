@@ -122,9 +122,19 @@ func saveConfig() {
 	configMu.Lock()
 	defer configMu.Unlock()
 
-	data, _ := json.MarshalIndent(config, "", "  ")
-	if err := os.WriteFile(cfgPath, data, 0600); err != nil {
+	data, err := json.MarshalIndent(config, "", "  ")
+	if err != nil {
+		log.Printf("save config marshal failed: %v", err)
+		return
+	}
+	// 原子写：先写临时文件再 rename，避免崩溃时损坏 config.json
+	tmp := cfgPath + ".tmp"
+	if err := os.WriteFile(tmp, data, 0600); err != nil {
 		log.Printf("save config failed: %v", err)
+		return
+	}
+	if err := os.Rename(tmp, cfgPath); err != nil {
+		log.Printf("save config rename failed: %v", err)
 	}
 }
 

@@ -29,8 +29,8 @@ const (
 
 // reasoningEntry 单条缓存
 type reasoningEntry struct {
-	content  string
-	toolIDs  []string
+	content   string
+	toolIDs   []string
 	createdAt time.Time
 }
 
@@ -82,8 +82,8 @@ func cleanReasoningCacheLocked() {
 	// 如果仍然超量，按创建时间清理最旧的
 	if len(reasoningCache.entries) >= reasoningCacheMaxSize {
 		type kv struct {
-			id  string
-			ts  time.Time
+			id string
+			ts time.Time
 		}
 		all := make([]kv, 0, len(reasoningCache.entries))
 		for id, e := range reasoningCache.entries {
