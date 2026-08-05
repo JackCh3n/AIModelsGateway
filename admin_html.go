@@ -721,6 +721,7 @@ const enabled=document.getElementById('provProxyEnabled').checked;
 document.getElementById('provProxyType').style.display=enabled?'':'none';
 document.getElementById('provProxyAddr').style.display=enabled?'':'none';
 }
+let _dragModelFrom=null;
 function renderModelTags(){
 const wrap=document.getElementById('provModelsWrap');
 const input=document.getElementById('provModelInput');
@@ -729,8 +730,55 @@ wrap.querySelectorAll('.tag').forEach(t=>t.remove());
 editingModels.forEach((m,i)=>{
 const tag=document.createElement('span');
 tag.className='tag';
+tag.draggable=true;
+tag.style.cursor='grab';
 tag.innerHTML=esc(m)+'<button class="tag-x" onclick="removeModelTag('+i+')">×</button>';
+if(editingModels.length>1){
+tag.addEventListener('dragstart',function(e){
+_dragModelFrom=i;
+e.dataTransfer.effectAllowed='move';
+e.dataTransfer.setData('text/plain',String(i));
+this.style.opacity='.5';
+});
+tag.addEventListener('dragend',function(event){
+this.style.opacity='';
+});
+tag.addEventListener('dragover',function(e){
+e.preventDefault();
+e.dataTransfer.dropEffect='move';
+this.style.outline='1px dashed var(--accent)';
+});
+tag.addEventListener('dragleave',function(){
+this.style.outline='';
+});
+tag.addEventListener('drop',function(e){
+e.preventDefault();
+this.style.outline='';
+if(_dragModelFrom===null)return;
+const src=_dragModelFrom;
+const to=i;
+_dragModelFrom=null;
+if(src===to)return;
+const[moved]=editingModels.splice(src,1);
+editingModels.splice(to,0,moved);
+renderModelTags();
+});
+}
 wrap.insertBefore(tag,input);
+});
+// 支持拖到末尾（input 前的空位）
+wrap.addEventListener('dragover',function(e){e.preventDefault();});
+wrap.addEventListener('drop',function(e){
+e.preventDefault();
+const src=e.dataTransfer.getData('text/plain');
+if(src==='')return;
+const from=parseInt(src,10);
+if(isNaN(from))return;
+if(from===editingModels.length-1)return;
+const[moved]=editingModels.splice(from,1);
+editingModels.push(moved);
+_dragModelFrom=null;
+renderModelTags();
 });
 }
 function addModelTag(val){
