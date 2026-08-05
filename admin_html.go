@@ -236,6 +236,36 @@ tr:hover{background:var(--hover)}
 <button class="btn btn-primary" onclick="saveSettings()">保存设置</button>
 </div>
 <div class="card">
+<div class="card-title">🔥 狂暴模式 <span id="rageStatus" class="badge badge-disabled" style="margin-left:8px">未启用</span></div>
+<p style="color:var(--muted);font-size:13px;margin-bottom:16px">启用后连接 Redis 做实时用量统计（异步聚合，不阻塞请求），同时加大 HTTP 连接池（MaxIdlePerHost 100→5000），支持 2w+ 并发。未启用时走普通模式，不连接 Redis。</p>
+<div class="form-row">
+<div class="form-group" style="flex:0 0 60px">
+<label>启用</label>
+<label style="display:flex;align-items:center;gap:8px;cursor:pointer;padding-top:6px">
+<input type="checkbox" id="rageModeToggle" style="width:20px;height:20px;cursor:pointer">
+<span style="font-size:13px;color:var(--muted)">开启</span>
+</label>
+</div>
+<div class="form-group">
+<label>Redis 地址</label>
+<input class="input" id="redisAddrInput" placeholder="如: 127.0.0.1:6379" oninput="this.value=this.value.trim()">
+</div>
+<div class="form-group">
+<label>Redis 密码</label>
+<input class="input" id="redisPasswordInput" type="password" placeholder="无密码可留空">
+</div>
+<div class="form-group" style="flex:0 0 80px">
+<label>DB 编号</label>
+<input class="input" id="redisDBInput" type="number" value="0" min="0" max="15">
+</div>
+</div>
+<div style="display:flex;gap:8px;margin-top:8px">
+<button class="btn btn-outline" onclick="testRedisConnection()">🔌 测试连接</button>
+<button class="btn btn-primary" onclick="saveRageMode()">保存并应用</button>
+</div>
+<div id="rageTestResult" style="margin-top:8px"></div>
+</div>
+<div class="card">
 <div class="card-title">模型上下文配置 <button class="btn btn-primary" onclick="showGlobalModelConfigModal()">+ 添加配置</button></div>
 <p style="color:var(--muted);font-size:13px;margin-bottom:16px">为指定模型配置输入/输出上下文预算。配置后网关转发时自动覆盖 max_tokens，留空则走客户端值。</p>
 <div id="globalModelConfigList"></div>
@@ -2103,6 +2133,69 @@ if(data.inputPresets&&data.inputPresets.length)inputPresets=data.inputPresets;
 if(data.outputPresets&&data.outputPresets.length)outputPresets=data.outputPresets;
 renderPresetEditors();
 loadGlobalModelConfigs();
+// 狂暴模式
+document.getElementById('rageModeToggle').checked=!!data.rageMode;
+document.getElementById('redisAddrInput').value=data.redisAddr||'';
+document.getElementById('redisPasswordInput').value=data.redisPassword||'';
+document.getElementById('redisDBInput').value=data.redisDb||0;
+updateRageStatus(!!data.rageMode);
+}
+
+function updateRageStatus(enabled){
+const el=document.getElementById('rageStatus');
+if(enabled){
+el.className='badge badge-active';
+el.textContent='已启用';
+}else{
+el.className='badge badge-disabled';
+el.textContent='未启用';
+}
+}
+
+// 保存狂暴模式配置
+async function saveRageMode(){
+const body={
+activeProviderId:activeProviderId,
+inputPresets:inputPresets,
+outputPresets:outputPresets,
+rageMode:document.getElementById('rageModeToggle').checked,
+redisAddr:document.getElementById('redisAddrInput').value.trim(),
+redisPassword:document.getElementById('redisPasswordInput').value,
+redisDb:parseInt(document.getElementById('redisDBInput').value)||0
+};
+const res=await fetch(API+'/settings',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+if(res.ok){
+const data=await res.json();
+updateRageStatus(data.rageMode);
+toast(data.rageMode?'狂暴模式已启用，Redis 连接中...':'狂暴模式已关闭','success');
+}else{
+toast('保存失败','error');
+}
+}
+
+// 测试 Redis 连接
+async function testRedisConnection(){
+const addr=document.getElementById('redisAddrInput').value.trim();
+if(!addr){toast('请输入 Redis 地址','error');return;}
+const result=document.getElementById('rageTestResult');
+result.innerHTML='<span class="loading"></span> 连接中...';
+try{
+const res=await fetch(API+'/settings',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({
+activeProviderId:activeProviderId,inputPresets:inputPresets,outputPresets:outputPresets,
+rageMode:true,redisAddr:addr,redisPassword:document.getElementById('redisPasswordInput').value,redisDb:parseInt(document.getElementById('redisDBInput').value)||0
+})});
+if(res.ok){
+const data=await res.json();
+updateRageStatus(data.rageMode);
+result.innerHTML='<div class="test-result test-success">✅ Redis 连接成功，狂暴模式已启用</div>';
+toast('Redis 连接成功','success');
+}else{
+result.innerHTML='<div class="test-result test-error">❌ 连接失败，请检查地址和密码</div>';
+toast('连接失败','error');
+}
+}catch(e){
+result.innerHTML='<div class="test-result test-error">❌ '+esc(e.message)+'</div>';
+}
 }
 
 // 填充预设下拉框

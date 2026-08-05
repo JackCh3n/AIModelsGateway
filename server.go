@@ -40,6 +40,11 @@ func startServer(port int) error {
 		}
 	}
 
+	// 如果启动时已配置狂暴模式，连接 Redis
+	if cfg.Settings.RageMode && cfg.Settings.RedisAddr != "" {
+		initRedis(cfg.Settings.RedisAddr, cfg.Settings.RedisPassword, cfg.Settings.RedisDB)
+	}
+
 	mux := http.NewServeMux()
 
 	// 健康检查

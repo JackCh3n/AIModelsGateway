@@ -16,11 +16,11 @@ import (
 	"golang.org/x/net/proxy"
 )
 
-// newDefaultTransport 创建优化过的 Transport，复用 TCP 连接提升并发能力
-func newDefaultTransport() *http.Transport {
+// newTransport 创建 Transport，参数化连接池大小以支持普通/狂暴两种模式
+func newTransport(maxIdle, maxIdlePerHost int) *http.Transport {
 	return &http.Transport{
-		MaxIdleConns:          500,             // 全局最大空闲连接
-		MaxIdleConnsPerHost:   100,             // 每个 host 的最大空闲连接（默认仅 2，是并发瓶颈）
+		MaxIdleConns:          maxIdle,
+		MaxIdleConnsPerHost:   maxIdlePerHost,
 		IdleConnTimeout:       90 * time.Second,
 		TLSHandshakeTimeout:   10 * time.Second,
 		ExpectContinueTimeout: 1 * time.Second,
@@ -28,9 +28,36 @@ func newDefaultTransport() *http.Transport {
 	}
 }
 
+// 普通模式连接池参数
+const (
+	normalMaxIdle        = 500
+	normalMaxIdlePerHost = 100
+	rageMaxIdle          = 10000 // 狂暴模式：全局最大空闲连接
+	rageMaxIdlePerHost   = 5000  // 狂暴模式：单 host 最大空闲连接（支持万级并发到同一上游）
+)
+
 var httpClient = &http.Client{
 	Timeout:   5 * time.Minute,
-	Transport: newDefaultTransport(),
+	Transport: newTransport(normalMaxIdle, normalMaxIdlePerHost),
+}
+
+// applyRageModePool 狂暴模式：加大 HTTP 连接池，支持更多并发
+func applyRageModePool() {
+	httpClient.Transport = newTransport(rageMaxIdle, rageMaxIdlePerHost)
+	// 清空代理 client 缓存，让它们用新参数重建
+	proxyClients.Lock()
+	proxyClients.m = make(map[string]*http.Client)
+	proxyClients.Unlock()
+	log.Printf("[rage] HTTP 连接池已加大: MaxIdle=%d PerHost=%d", rageMaxIdle, rageMaxIdlePerHost)
+}
+
+// restoreNormalPool 恢复普通模式连接池
+func restoreNormalPool() {
+	httpClient.Transport = newTransport(normalMaxIdle, normalMaxIdlePerHost)
+	proxyClients.Lock()
+	proxyClients.m = make(map[string]*http.Client)
+	proxyClients.Unlock()
+	log.Printf("[rage] HTTP 连接池已恢复普通模式: MaxIdle=%d PerHost=%d", normalMaxIdle, normalMaxIdlePerHost)
 }
 
 // 代理 HTTP Client 缓存：按 (enabled,type,addr) 复用 Transport，避免每次请求新建连接
@@ -50,7 +77,7 @@ func getHTTPClient(p *Provider) *http.Client {
 	if c, ok := proxyClients.m[cacheKey]; ok {
 		return c
 	}
-	transport := newDefaultTransport()
+	transport := newTransport(normalMaxIdle, normalMaxIdlePerHost)
 	switch p.ProxyType {
 	case "http", "https":
 		proxyURL, err := url.Parse(p.ProxyType + "://" + p.ProxyAddr)

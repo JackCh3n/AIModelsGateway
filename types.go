@@ -69,6 +69,11 @@ type Settings struct {
 	DefaultModel     string   `json:"defaultModel"`
 	InputPresets     []string `json:"inputPresets"`  // 输入上下文预算预设
 	OutputPresets    []string `json:"outputPresets"` // 输出预算预设
+	// 狂暴模式：启用 Redis 统计 + 加大连接池，支持更高并发
+	RageMode      bool   `json:"rageMode"`
+	RedisAddr     string `json:"redisAddr"`     // Redis 地址，如 127.0.0.1:6379
+	RedisPassword string `json:"redisPassword"` // Redis 密码
+	RedisDB       int    `json:"redisDb"`       // Redis DB 编号
 }
 
 // ModelAlias 模型路由别名
@@ -88,4 +93,13 @@ type Config struct {
 	Aliases   []ModelAlias `json:"aliases"`
 	Settings  Settings     `json:"settings"`
 	UsageLogs []UsageLog   `json:"usageLogs,omitempty"` // 已迁移到SQLite，保留字段向后兼容
+	idx       configIndex  `json:"-"`                   // 预计算索引，不序列化
+}
+
+// configIndex 预计算索引，将热路径 O(n) 查找优化为 O(1)
+type configIndex struct {
+	apiKeySet        map[string]bool       // API Key 验证：key -> active
+	aliasMap         map[string]ModelAlias // 别名查找：aliasName -> alias
+	providerMap      map[string]int        // 站点查找：providerID -> slice index
+	activeProviderIdx int                   // 活跃站点在 Providers 中的下标，-1 表示无
 }

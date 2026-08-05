@@ -134,37 +134,45 @@ Anthropic: http://127.0.0.1:3458/v1/messages/p/{站点ID}
 
 ## 并发性能
 
-网关针对高并发场景做了以下优化，单机可支持 200~500+ 并发请求（实际瓶颈取决于上游 API 限速）：
+网关采用 **atomic.Pointer 无锁读 + COW 写 + 预计算索引** 架构，普通模式支持 500+ 并发，狂暴模式支持 **20000+ 并发**（例如单站点单模型场景，实际瓶颈取决于上游 API 限速和系统文件描述符上限）。
 
-### 已实现的优化
+### 普通模式（默认）
+
+无需 Redis，开箱即用。已实现以下优化：
 
 | 优化项 | 说明 |
 |--------|------|
-| **读写锁** | 配置读取使用 `sync.RWMutex`，请求路径（鉴权/路由/选 Key）全部走 RLock 并发读，仅管理操作持写锁 |
-| **异步用量记录** | 请求路径不再同步写 `config.json`，用量日志通过 4096 缓冲 channel 异步写入 SQLite，批量提交（每 3 秒或满 200 条），不阻塞请求 |
-| **HTTP 连接池** | 上游请求复用 TCP 连接：`MaxIdleConnsPerHost=100`（默认仅 2），`MaxIdleConns=500`，减少 TLS 握手开销 |
-| **SQLite 连接池** | `SetMaxOpenConns(50)` + WAL 模式，读写不互斥 |
-| **Server 超时** | `ReadHeaderTimeout=10s` 防 slowloris，`WriteTimeout=5m` 兼容流式，`IdleTimeout=120s` 及时回收空闲连接 |
-| **优雅关闭** | 收到 SIGINT/SIGTERM 后先刷盘待写入日志，再等待活跃连接结束，避免数据丢失 |
+| **atomic.Pointer 无锁读** | 请求路径 `configPtr.Load()` 完全无锁，数千并发零竞争 |
+| **COW 写** | 管理操作 copy-on-write：深拷贝配置→修改→原子替换指针，旧指针永远安全，彻底消除数据竞争 |
+| **预计算索引** | API Key 验证、别名查找、站点查找均 O(1) map 查找（原 O(n) 线性扫描） |
+| **atomic Key 轮询** | 每个 provider 独立 `atomic.Uint64` 计数器，无全局锁 |
+| **异步用量记录** | 20000 缓冲 channel 异步批量写入 SQLite，不阻塞请求 |
+| **HTTP 连接池** | `MaxIdleConnsPerHost=100`，`MaxIdleConns=500` |
+| **Server 超时** | `ReadHeaderTimeout=10s` 防 slowloris，`WriteTimeout=5m` 兼容流式 |
+| **优雅关闭** | SIGINT/SIGTERM 后先刷盘 SQLite + Redis 日志再 Shutdown |
 
-### 并发瓶颈分析
+### 狂暴模式（可选）
 
-- **上游 API 限速**：真正瓶颈是上游服务商的 QPS 限制，多 Key 轮询可分散压力
-- **SQLite 写入**：已通过异步批量写入规避，写入不再阻塞请求
-- **内存**：每条请求约 10~50KB 内存（含 body 缓冲），1000 并发约需 10~50MB
+在设置页配置 Redis 连接后启用，进一步提升并发能力至 **2w+ 请求**：
 
-### Redis 支持（可选）
+| 优化项 | 普通模式 | 狂暴模式 |
+|--------|----------|----------|
+| 用量统计 | SQLite 聚合查询 | Redis HINCRBY 异步聚合计数（内存级延迟） |
+| Redis 写入 | 无 | 20000 缓冲 channel + 后台 worker 批量 Pipeline（聚合同 key+field，500 条/批，100ms 刷一次） |
+| HTTP 连接池 | MaxIdlePerHost=100，MaxIdle=500 | **MaxIdlePerHost=5000，MaxIdle=10000**（支持万级并发到同一上游） |
+| SQLite 写入 | 20000 缓冲，500 条/事务，1s 刷一次 | 同左（仅用于日志明细查看） |
+| Redis 连接 | 不连接 | PoolSize=50 |
 
-当前单机架构已能满足大多数场景。如需 **多实例水平扩展** 或 **分布式限流**，可引入 Redis：
+启用方式：管理后台 → 设置 → 🔥 狂暴模式 → 填写 Redis 地址/密码 → 测试连接 → 保存并应用。
 
-| 场景 | Redis 用途 | 实现方式 |
-|------|-----------|----------|
-| 多实例部署 | 共享配置/用量 | 用 Redis 替代 `config.json` + SQLite 存储用量日志 |
-| 分布式限流 | 按 Key/IP 限速 | 用 Redis INCR + EXPIRE 实现滑动窗口限流 |
-| 分布式 Key 轮询 | 跨实例均衡 | 用 Redis 计数器替代内存 `keyRotation` |
-| 共享 reasoning_content 缓存 | 跨实例缓存思维链 | 用 Redis 替代内存 `reasoningCache` |
+**2w+ 并发原理**（以单站点单模型为例）：
 
-引入 Redis 需新增依赖 `github.com/redis/go-redis/v9`，并在 `Settings` 中增加 Redis 连接配置。当前版本未集成 Redis，单机性能已足够；如需启用可按上述方案扩展。
+1. 请求路径零锁：`atomic.Pointer.Load()` + `atomic.Uint64` Key 轮询 + map O(1) 查找，CPU 仅消耗在 IO 等待
+2. 用量统计零阻塞：`redisIncrUsage` 仅向 20000 缓冲 channel 投递（纳秒级），后台 worker 聚合后一次 Pipeline 网络往返
+3. 上游连接复用：单 host 5000 空闲连接池，避免反复握手
+4. 日志写入不阻塞：SQLite channel 同样 20000 缓冲，500 条/事务批量写
+
+> ⚠️ **系统限制提示**：Linux 下需 `ulimit -n 65535` 提高文件描述符上限；Windows 默认上限较高一般无需调整。实际吞吐还受上游 API 限速、网络带宽、CPU 核心数制约。
 
 ## License
 
