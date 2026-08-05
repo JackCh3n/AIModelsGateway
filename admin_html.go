@@ -1043,7 +1043,7 @@ html+='<td>'+esc(p.name)+(isActive?' <span class="badge badge-current">当前</s
 html+='<td><span class="badge badge-'+p.format+'">'+p.format+'</span></td>';
 html+='<td class="mono">'+esc(p.baseUrl)+'</td>';
 html+='<td>'+enabledCount+'/'+totalCount+'</td>';
-html+='<td>'+activeKeyCount+'/'+totalKeyCount+' keys</td>';
+html+='<td>'+activeKeyCount+'/'+totalKeyCount+'</td>';
 html+='<td><span class="badge badge-'+p.status+'">'+p.status+'</span></td>';
 html+='<td style="white-space:nowrap" onclick="event.stopPropagation()">';
 if(!isActive&&p.status==='active')html+='<button class="btn btn-sm btn-success" onclick="setActive(\''+p.id+'\')">启用</button> ';
