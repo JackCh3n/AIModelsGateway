@@ -1469,17 +1469,17 @@ const prov=allProvidersCache.find(x=>x.id===providerId);
 const activeKeys=(prov&&prov.apiKeys||[]).filter(k=>(k.status||'active')==='active');
 const testKey=activeKeys.length?activeKeys[0].key:(prov?prov.apiKey:'');
 const resultText=data.success?'正常':'异常';
-// 组装一键复制文本
-let copyStr='站点: '+(prov?prov.name:'')+'\n';
-copyStr+='测试 Key: '+(testKey||'-')+'\n';
-copyStr+='测试模型: '+model+'\n';
-copyStr+='请求地址: '+(data.testUrl||'-')+'\n';
-copyStr+='发送消息: '+(data.testMessage||'-')+'\n';
-copyStr+='测试结果: '+resultText+' (HTTP '+(data.status||'-')+')\n';
-copyStr+=(data.success?('AI 回复: '+(data.content||'')):('错误信息: '+(data.error||'')));
+// 组装一键复制文本（存入全局，避免内嵌进 onclick 属性导致引号冲突）
+window._copyBuffer='站点: '+(prov?prov.name:'')+'\n';
+window._copyBuffer+='测试 Key: '+(testKey||'-')+'\n';
+window._copyBuffer+='测试模型: '+model+'\n';
+window._copyBuffer+='请求地址: '+(data.testUrl||'-')+'\n';
+window._copyBuffer+='发送消息: '+(data.testMessage||'-')+'\n';
+window._copyBuffer+='测试结果: '+resultText+' (HTTP '+(data.status||'-')+')\n';
+window._copyBuffer+=(data.success?('AI 回复: '+(data.content||'')):('错误信息: '+(data.error||'')));
 let html='<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">';
 html+='<div style="font-size:15px;font-weight:600">测试结果: <span class="badge badge-'+(data.success?'active':'disabled')+'">'+resultText+'</span></div>';
-html+='<button class="copy-btn" onclick="copyText('+JSON.stringify(copyStr)+',this)">📋 一键复制</button>';
+html+='<button class="copy-btn" onclick="copyText(window._copyBuffer,this)">📋 一键复制</button>';
 html+='</div>';
 html+='<div style="margin-bottom:12px">';
 html+='<div style="font-size:13px;color:var(--muted);margin-bottom:4px">测试站点</div>';
