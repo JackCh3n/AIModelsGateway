@@ -332,11 +332,17 @@ tr:hover{background:var(--hover)}
 <div class="form-group">
 <label>API Keys (多Key轮询，回车或逗号分隔添加多个)</label>
 <div id="provKeysList" style="margin-bottom:8px"></div>
-<div style="display:flex;gap:8px">
+<div style="display:flex;gap:8px;margin-bottom:8px">
 <input class="input" id="provKeyInput" placeholder="sk-... 回车或逗号分隔添加多个" style="flex:1" oninput="this.value=this.value.trim()" onkeydown="handleKeyKeydown(event)">
 <input class="input" id="provKeyName" placeholder="备注(可选)" style="width:120px">
 <button class="btn btn-outline" onclick="addProvKey()">添加</button>
 <button class="btn btn-outline" onclick="clearProvKeys()">🗑 一键清空</button>
+</div>
+<div style="display:flex;gap:8px;align-items:center">
+<label style="font-size:13px;color:var(--muted);display:flex;align-items:center;gap:4px;cursor:pointer"><input type="checkbox" id="provKeySelectAll" onchange="toggleAllKeys(this.checked)"> 全选</label>
+<span class="badge badge-active" id="provKeySelCount">已选 0</span>
+<button class="btn btn-outline btn-sm" onclick="batchDeleteKeys()">🗑 批量删除</button>
+<button class="btn btn-outline btn-sm" onclick="testAllProvKeys()">⚡ 一键检测</button>
 </div>
 </div>
 <div class="form-group">
@@ -744,10 +750,13 @@ renderModelTags();
 }
 
 // --- 多 Key 管理 ---
+let adminKeySelected=new Set();
 function renderKeyList(){
 const el=document.getElementById('provKeysList');
 el.innerHTML='';
 if(editingKeys.length===0){
+adminKeySelected.clear();
+updateKeySelUI();
 el.innerHTML='<div style="color:var(--muted);font-size:12px;padding:4px 0">暂无 Key，请在下方添加</div>';
 return;
 }
@@ -758,15 +767,78 @@ editingKeys.forEach((k,i)=>{
 const item=document.createElement('div');
 item.className='key-item';
 const isActive=(k.status||'active')==='active';
-let html='<input class="input key-edit-val" value="'+esc(k.key)+'" oninput="this.value=this.value.trim();editingKeys['+i+'].key=this.value" style="flex:1;font-size:12px;padding:4px 8px" title="可编辑">';
+const checked=adminKeySelected.has(i)?'checked':'';
+let html='<input type="checkbox" '+checked+' onchange="toggleKeySelect('+i+',this.checked)" title="选择" style="flex-shrink:0">';
+html+='<input class="input key-edit-val" value="'+esc(k.key)+'" oninput="this.value=this.value.trim();editingKeys['+i+'].key=this.value" style="flex:1;font-size:12px;padding:4px 8px" title="可编辑">';
 html+='<input class="input key-edit-name" value="'+esc(k.name||'')+'" placeholder="备注" oninput="editingKeys['+i+'].name=this.value" style="width:100px;font-size:12px;padding:4px 8px">';
 html+='<span class="badge badge-'+(k.status||'active')+'">'+(k.status||'active')+'</span>';
 html+='<button class="copy-btn" onclick="toggleProvKey('+i+')" title="'+(isActive?'禁用':'启用')+'">'+(isActive?'⏸️':'▶️')+'</button>';
 html+='<button class="copy-btn" onclick="testProvKey('+i+')">测试</button>';
-html+='<button class="key-x" onclick="removeProvKey('+i+')" title="删除">×</button>';
+html+='<button class="copy-btn" onclick="removeProvKey('+i+')" title="删除">×</button>';
 item.innerHTML=html;
 el.appendChild(item);
 });
+updateKeySelUI();
+}
+function toggleKeySelect(i,checked){
+if(checked)adminKeySelected.add(i);else adminKeySelected.delete(i);
+updateKeySelUI();
+}
+function toggleAllKeys(checked){
+adminKeySelected.clear();
+if(checked){editingKeys.forEach((_,i)=>adminKeySelected.add(i));}
+renderKeyList();
+}
+function updateKeySelUI(){
+const all=document.getElementById('provKeySelectAll');
+const cnt=document.getElementById('provKeySelCount');
+if(all)all.checked=editingKeys.length>0&&adminKeySelected.size===editingKeys.length;
+if(cnt)cnt.textContent='已选 '+adminKeySelected.size;
+}
+function batchDeleteKeys(){
+if(adminKeySelected.size===0){toast('未选择任何 Key','error');return;}
+if(!confirm('确定删除选中的 '+adminKeySelected.size+' 个 Key 吗？'))return;
+const idx=[...adminKeySelected].sort((a,b)=>b-a);
+idx.forEach(i=>editingKeys.splice(i,1));
+adminKeySelected.clear();
+renderKeyList();
+toast('已批量删除 '+idx.length+' 个 Key','success');
+}
+async function testAllProvKeys(){
+const baseUrl=document.getElementById('provBaseUrl').value;
+const format=document.getElementById('provFormat').value;
+const model=editingModels[0]||'gpt-4o-mini';
+if(!baseUrl){toast('请先填写 Base URL','error');return;}
+if(editingKeys.length===0){toast('没有 Key 可检测','error');return;}
+const modal=document.getElementById('modelTestModal');
+const content=document.getElementById('modelTestContent');
+modal.classList.add('show');
+content.innerHTML='<div class="empty"><span class="loading"></span> 正在检测 '+editingKeys.length+' 个 Key ...</div>';
+let ok=0,fail=0,failList=[];
+for(let i=0;i<editingKeys.length;i++){
+const k=editingKeys[i];
+content.innerHTML='<div class="empty">正在检测 <strong>'+esc(k.key.substring(0,8)+'...')+'</strong> ('+(i+1)+'/'+editingKeys.length+')<br><div class="loading" style="margin-top:8px"></div></div>';
+try{
+const res=await fetch(API+'/test',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({
+baseUrl:baseUrl,apiKey:k.key,format:format,model:model,
+customHeaders:{...editingHeaders},
+proxyEnabled:document.getElementById('provProxyEnabled').checked,
+proxyType:document.getElementById('provProxyType').value,
+proxyAddr:document.getElementById('provProxyAddr').value.trim()
+})});
+const data=await res.json();
+if(data.success){ok++;}else{fail++;failList.push({key:k.key,reason:data.error||'失败'});}
+}catch(e){fail++;failList.push({key:k.key,reason:e.message});}
+}
+let html='<div style="margin-bottom:12px"><strong>检测完成</strong> (HTTP '+editingKeys.length+' 个)</div>';
+html+='<div style="margin-bottom:8px"><span class="badge badge-active">可用 '+ok+'</span> <span class="badge badge-disabled" style="margin-left:4px">不可用 '+fail+'</span></div>';
+if(failList.length){
+html+='<div style="font-size:13px;color:var(--muted);margin-bottom:4px">不可用明细</div>';
+failList.forEach(f=>{
+html+='<div class="test-error" style="padding:8px;margin-bottom:6px;font-size:12px"><span class="mono">'+esc(f.key.substring(0,12)+'...')+'</span><br>'+esc(f.reason)+'</div>';
+});
+}
+content.innerHTML=html;
 }
 function addProvKey(){
 const keyInput=document.getElementById('provKeyInput');
@@ -790,12 +862,20 @@ toast('已添加 '+added+' 个 Key','success');
 }
 function clearProvKeys(){
 if(!editingKeys.length){toast('没有可清空的 Key','error');return;}
+if(!confirm('确定清空全部 Key 吗？'))return;
 editingKeys=[];
+adminKeySelected.clear();
 renderKeyList();
 toast('已清空全部 Key','success');
 }
 function removeProvKey(i){
 editingKeys.splice(i,1);
+const shifted=new Set();
+adminKeySelected.forEach(idx=>{
+if(idx===i)return;
+if(idx>i)shifted.add(idx-1);else shifted.add(idx);
+});
+adminKeySelected=shifted;
 renderKeyList();
 }
 function toggleProvKey(i){
@@ -1250,7 +1330,7 @@ let added=0;
 const parts=raw.split(/[;；]/);
 parts.forEach(part=>{
 part=part.trim();
-if(!part)continue;
+if(!part){return;}
 let sep=part.indexOf(':');
 if(sep===-1)sep=part.indexOf('=');
 if(sep===-1){toast('格式应为 Key: Value 或 Key=Value','error');return;}
