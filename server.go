@@ -168,9 +168,15 @@ func startServer(port int) error {
 
 	// 启动信息
 	addr := fmt.Sprintf(":%d", port)
+	// 控制台横幅版本：优先使用编译时注入的版本（-ldflags -X main.Version=...），
+	// 未注入（go run 调试）时显示 v1.0 兜底
+	dispVer := Version
+	if dispVer == "" || dispVer == "dev" {
+		dispVer = "v1.0"
+	}
 	fmt.Println()
 	fmt.Println(strings.Repeat("=", 56))
-	fmt.Println("  AI Models Gateway v1.0")
+	fmt.Printf("  AI Models Gateway %s\n", dispVer)
 	fmt.Println(strings.Repeat("=", 56))
 	fmt.Printf("  服务地址:   http://127.0.0.1:%d\n", port)
 	fmt.Printf("  OpenAI:    http://127.0.0.1:%d/v1/chat/completions\n", port)
