@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
     AI Models Gateway 编译启动脚本
 .DESCRIPTION
