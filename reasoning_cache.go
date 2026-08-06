@@ -185,7 +185,19 @@ func injectReasoningIntoRequestBody(body []byte) ([]byte, int) {
 
 		// 必须有 tool_calls 才需要注入
 		toolCalls, ok := msg["tool_calls"].([]any)
-		if !ok || len(toolCalls) == 0 {
+		hasToolCalls := ok && len(toolCalls) > 0
+		if !hasToolCalls {
+			// 无 tool_calls 的 assistant 消息也可能需要注入 reasoning：
+			// DeepSeek 思维模式下，若历史 assistant 消息曾在思维中产出 reasoning，
+			// 客户端(如 LiteLLM)在后续轮次仍要求将其传回，否则 400。
+			// 此处用最近缓存的 reasoning 兜底注入（仅在消息为 assistant 且无 reasoning 时）。
+			if r := lookupRecentReasoning(); r != "" {
+				msg["reasoning_content"] = r
+				messages[i] = msg
+				injected++
+				modified = true
+				log.Printf("[reasoning] injected via recent reasoning into plain assistant msg #%d (no tool_calls)", i)
+			}
 			continue
 		}
 
