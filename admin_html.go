@@ -1998,7 +1998,6 @@ if(res.ok){toast('已删除','success');loadAliases();}
 
 // --- 主备路由 ---
 let failoverEntriesDraft=[];
-let failoverModelsCache={};
 
 // 构建站点+模型下拉（复用 allProvidersCache）
 function failoverProviderOptions(selected){
@@ -2013,10 +2012,12 @@ return html;
 }
 
 function failoverModelOptions(providerId,selected){
-if(!providerId||!failoverModelsCache[providerId])return '<option value="">— 先选站点 —</option>';
-let html='<option value="">— 选择模型 —</option>';
-const disabledSet=new Set(failoverModelsCache[providerId].disabledModels||[]);
-for(const m of (failoverModelsCache[providerId].models||[])){
+if(!providerId)return '<option value="">- 先选站点 -</option>';
+const p=allProvidersCache.find(x=>x.id===providerId);
+if(!p)return '<option value="">- 站点数据缺失 -</option>';
+let html='<option value="">- 选择模型 -</option>';
+const disabledSet=new Set(p.disabledModels||[]);
+for(const m of (p.models||[])){
 if(disabledSet.has(m))continue;
 const sel=m===selected?' selected':'';
 html+='<option value="'+esc(m)+'"'+sel+'>'+esc(m)+'</option>';
@@ -2140,9 +2141,6 @@ if(!data||data.length===0){
 el.innerHTML='<div class="empty">暂无主备路由，点击右上角添加</div>';
 return;
 }
-// 构建模型缓存
-failoverModelsCache={};
-for(const p of allProvidersCache)failoverModelsCache[p.id]=p;
 let html='<table><tr><th>路由名</th><th>优先级</th><th>站点 / 模型</th><th>操作</th></tr>';
 for(const f of data){
 html+='<tr>';
