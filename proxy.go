@@ -232,43 +232,76 @@ func proxyRequest(w http.ResponseWriter, r *http.Request, clientFormat string, p
 		upstreamURL = strings.TrimSuffix(upstreamURL, "/") + "/messages"
 	}
 
-	req, err := http.NewRequest("POST", upstreamURL, bytes.NewReader(upstreamBody))
-	if err != nil {
-		writeError(w, clientFormat, http.StatusInternalServerError, "create request: "+err.Error())
-		return
-	}
-	// 绑定客户端 Context：客户端断开时自动取消上游请求，避免资源泄漏
-	req = req.WithContext(r.Context())
-
-	// 设置请求头
-	req.Header.Set("Content-Type", "application/json")
+	// 上游请求重试：上游繁忙（503 SERVICE_BUSY）或限流（429）时自动重试最多 3 次
+	// 重试间隔逐次递增（500ms / 1s / 1.5s），3 次仍失败才将错误返回客户端
+	const maxUpstreamRetries = 3
 	apiKey := pickAPIKey(provider)
-	if provider.Format == "anthropic" {
-		req.Header.Set("x-api-key", apiKey)
-		req.Header.Set("anthropic-version", "2023-06-01")
-	} else {
-		req.Header.Set("Authorization", "Bearer "+apiKey)
-	}
 
-	// 应用自定义请求头（覆盖同名默认头）
-	for k, v := range provider.CustomHeaders {
-		req.Header.Set(k, v)
-	}
+	var resp *http.Response
+	var lastStatus int
+	var lastBody []byte
 
-	resp, err := getHTTPClient(provider).Do(req)
-	if err != nil {
-		log.Printf("  upstream error: %v", err)
-		writeError(w, clientFormat, http.StatusBadGateway, "upstream request failed: "+err.Error())
+	for attempt := 0; attempt <= maxUpstreamRetries; attempt++ {
+		// 每次重试重新构建请求（body 为 bytes.Reader 需重建）
+		req, err := http.NewRequest("POST", upstreamURL, bytes.NewReader(upstreamBody))
+		if err != nil {
+			writeError(w, clientFormat, http.StatusInternalServerError, "create request: "+err.Error())
+			return
+		}
+		// 绑定客户端 Context：客户端断开时自动取消上游请求，避免资源泄漏
+		req = req.WithContext(r.Context())
+
+		// 设置请求头
+		req.Header.Set("Content-Type", "application/json")
+		if provider.Format == "anthropic" {
+			req.Header.Set("x-api-key", apiKey)
+			req.Header.Set("anthropic-version", "2023-06-01")
+		} else {
+			req.Header.Set("Authorization", "Bearer "+apiKey)
+		}
+
+		// 应用自定义请求头（覆盖同名默认头）
+		for k, v := range provider.CustomHeaders {
+			req.Header.Set(k, v)
+		}
+
+		resp, err = getHTTPClient(provider).Do(req)
+		if err != nil {
+			log.Printf("  upstream error: %v", err)
+			writeError(w, clientFormat, http.StatusBadGateway, "upstream request failed: "+err.Error())
+			return
+		}
+
+		if resp.StatusCode == http.StatusOK {
+			break // 成功，进入后续处理
+		}
+
+		// 读响应体，判断是否可重试
+		lastBody, _ = io.ReadAll(resp.Body)
+		resp.Body.Close()
+		lastStatus = resp.StatusCode
+
+		// 仅上游繁忙(503)或限流(429)时重试；其余错误直接返回
+		if resp.StatusCode == http.StatusServiceUnavailable || resp.StatusCode == http.StatusTooManyRequests {
+			if attempt < maxUpstreamRetries {
+				delay := time.Duration(attempt+1) * 500 * time.Millisecond
+				log.Printf("  upstream %d (SERVICE_BUSY), retry %d/%d after %v: %s",
+					resp.StatusCode, attempt+1, maxUpstreamRetries, delay, truncate(string(lastBody), 200))
+				select {
+				case <-time.After(delay):
+				case <-r.Context().Done():
+					return // 客户端已断开，放弃重试
+				}
+				continue
+			}
+		}
+
+		// 不可重试错误，或重试次数耗尽
+		log.Printf("  upstream %d: %s", lastStatus, truncate(string(lastBody), 500))
+		writeError(w, clientFormat, lastStatus, fmt.Sprintf("upstream %d: %s", lastStatus, truncate(string(lastBody), 300)))
 		return
 	}
 	defer resp.Body.Close()
-
-	if resp.StatusCode != 200 {
-		respBody, _ := io.ReadAll(resp.Body)
-		log.Printf("  upstream %d: %s", resp.StatusCode, truncate(string(respBody), 500))
-		writeError(w, clientFormat, resp.StatusCode, fmt.Sprintf("upstream %d: %s", resp.StatusCode, truncate(string(respBody), 300)))
-		return
-	}
 
 	if isStream {
 		handleStreamProxy(w, resp, clientFormat, provider.Format, provider, model)

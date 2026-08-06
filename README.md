@@ -147,6 +147,7 @@ Anthropic: http://127.0.0.1:3458/v1/messages/p/{站点ID}
 | **预计算索引** | API Key 验证、别名查找、站点查找均 O(1) map 查找（原 O(n) 线性扫描） |
 | **atomic Key 轮询** | 每个 provider 独立 `atomic.Uint64` 计数器，无全局锁 |
 | **异步用量记录** | 20000 缓冲 channel 异步批量写入 SQLite，不阻塞请求 |
+| **上游自动重试** | 上游返回 503 繁忙 / 429 限流时自动重试最多 3 次（间隔 500ms/1s/1.5s 递增），3 次仍失败才返回错误给客户端 |
 | **HTTP 连接池** | `MaxIdleConnsPerHost=100`，`MaxIdleConns=500` |
 | **Server 超时** | `ReadHeaderTimeout=10s` 防 slowloris，`WriteTimeout=5m` 兼容流式 |
 | **优雅关闭** | SIGINT/SIGTERM 后先刷盘 SQLite + Redis 日志再 Shutdown |
