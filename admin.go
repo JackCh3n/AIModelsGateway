@@ -445,8 +445,12 @@ func registerAdminRoutes(mux *http.ServeMux) {
 				writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 				return
 			}
-			f = addFailover(f)
-			writeJSON(w, http.StatusOK, f)
+			result, err := addFailover(f)
+			if err != nil {
+				writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+				return
+			}
+			writeJSON(w, http.StatusOK, result)
 		default:
 			writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 		}
@@ -466,7 +470,12 @@ func registerAdminRoutes(mux *http.ServeMux) {
 				return
 			}
 			f.ID = id
-			if !updateFailover(f) {
+			updated, err := updateFailover(f)
+			if err != nil {
+				writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+				return
+			}
+			if !updated {
 				writeJSON(w, http.StatusNotFound, map[string]string{"error": "failover not found"})
 				return
 			}

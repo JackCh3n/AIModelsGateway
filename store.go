@@ -586,16 +586,42 @@ func listFailovers() []FailoverRoute {
 	return result
 }
 
-func addFailover(f FailoverRoute) FailoverRoute {
+// isModelNameConflict 检查名称是否与已有别名或主备路由冲突（排除自身）
+func isModelNameConflict(name, excludeFailoverID string) bool {
+	cfg := loadConfig()
+	if _, ok := cfg.idx.aliasMap[name]; ok {
+		return true
+	}
+	for _, f := range cfg.Failovers {
+		if f.ID != excludeFailoverID && f.Name == name {
+			return true
+		}
+	}
+	return false
+}
+
+func addFailover(f FailoverRoute) (FailoverRoute, error) {
+	if f.Name == "" {
+		return f, fmt.Errorf("路由名称不能为空")
+	}
+	if isModelNameConflict(f.Name, "") {
+		return f, fmt.Errorf("路由名称「%s」与已有别名或主备路由重复，请换一个", f.Name)
+	}
 	f.ID = generateID("fo")
 	sortFailoverEntries(&f)
 	mutateConfig(func(cfg *Config) {
 		cfg.Failovers = append(cfg.Failovers, f)
 	})
-	return f
+	return f, nil
 }
 
-func updateFailover(f FailoverRoute) bool {
+func updateFailover(f FailoverRoute) (bool, error) {
+	if f.Name == "" {
+		return false, fmt.Errorf("路由名称不能为空")
+	}
+	if isModelNameConflict(f.Name, f.ID) {
+		return false, fmt.Errorf("路由名称「%s」与已有别名或主备路由重复，请换一个", f.Name)
+	}
 	updated := false
 	sortFailoverEntries(&f)
 	mutateConfig(func(cfg *Config) {
@@ -607,7 +633,7 @@ func updateFailover(f FailoverRoute) bool {
 			}
 		}
 	})
-	return updated
+	return updated, nil
 }
 
 func deleteFailover(id string) bool {

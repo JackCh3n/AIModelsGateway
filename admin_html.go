@@ -2121,7 +2121,8 @@ closeModal('failoverModal');
 toast(id?'已更新':'已添加','success');
 loadFailovers();
 }else{
-toast('操作失败','error');
+const err=await res.json().catch(()=>({}));
+toast(err.error||'操作失败','error');
 }
 }
 
