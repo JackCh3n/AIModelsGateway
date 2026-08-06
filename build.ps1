@@ -1,4 +1,4 @@
-﻿<#
+<#
 .SYNOPSIS
     AI Models Gateway 编译启动脚本
 .DESCRIPTION
@@ -39,13 +39,14 @@ if ($conn) {
 
 # 3. 编译
 Write-Host "[3/4] 编译中..." -ForegroundColor Yellow
-$ver = Get-Date -Format "yyyyMMddHHmm"
+# 版本号与 CI（.cnb.yml / GitHub Actions）保持一致格式：vYYYY_MMDD_HHMM，便于阅读
+$ver = "v" + (Get-Date -Format "yyyy_MMdd_HHmm")
 go build -ldflags "-X main.Version=$ver" -o $exeName .
 if ($LASTEXITCODE -ne 0) {
     Write-Host "  编译失败!" -ForegroundColor Red
     exit 1
 }
-Write-Host "  编译成功 -> $exeName (v$ver)" -ForegroundColor Green
+Write-Host "  编译成功 -> $exeName ($ver)" -ForegroundColor Green
 
 # 4. 启动
 Write-Host "[4/4] 启动服务..." -ForegroundColor Yellow
