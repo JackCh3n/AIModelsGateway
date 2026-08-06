@@ -118,6 +118,8 @@ func dbGetUsageStats() map[string]any {
 	byProvider := map[string]map[string]int64{}
 	byModel := map[string]map[string]int64{}
 	byDate := map[string]map[string]int64{}
+	today := time.Now().Format("2006-01-02")
+	byModelToday := map[string]int64{}
 
 	// 按站点
 	rows, err := db.Query("SELECT provider_name,COALESCE(SUM(input_tokens),0),COALESCE(SUM(output_tokens),0),COALESCE(SUM(total_tokens),0),COUNT(*) FROM usage_logs GROUP BY provider_name")
@@ -143,6 +145,18 @@ func dbGetUsageStats() map[string]any {
 		rows.Close()
 	}
 
+	// 当日各模型请求次数
+	rows, err = db.Query("SELECT model,COUNT(*) FROM usage_logs WHERE substr(timestamp,1,10)=? GROUP BY model ORDER BY COUNT(*) DESC", today)
+	if err == nil {
+		for rows.Next() {
+			var model string
+			var count int64
+			rows.Scan(&model, &count)
+			byModelToday[model] = count
+		}
+		rows.Close()
+	}
+
 	// 按日期
 	// 注意：SQLite 的 date() 函数无法解析带时区偏移和纳秒的时间戳格式
 	// (如 2026-08-05T01:10:41.8356031+08:00)，会返回 NULL。
@@ -159,13 +173,14 @@ func dbGetUsageStats() map[string]any {
 	}
 
 	return map[string]any{
-		"totalInput":  totalInput,
-		"totalOutput": totalOutput,
-		"totalTokens": totalAll,
-		"totalReqs":   totalReqs,
-		"byProvider":  byProvider,
-		"byModel":     byModel,
-		"byDate":      byDate,
+		"totalInput":   totalInput,
+		"totalOutput":  totalOutput,
+		"totalTokens":  totalAll,
+		"totalReqs":    totalReqs,
+		"byProvider":   byProvider,
+		"byModel":      byModel,
+		"byDate":       byDate,
+		"byModelToday": byModelToday,
 	}
 }
 

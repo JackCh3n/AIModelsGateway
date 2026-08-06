@@ -42,6 +42,15 @@ var reasoningCache = struct {
 	entries: make(map[string]*reasoningEntry),
 }
 
+// lastReasoning 最近一次缓存的 reasoning_content。
+// 兜底场景：部分客户端（如 LiteLLM）在后续请求中会重新生成 tool_call_id，
+// 导致按 id 精确匹配失败。此时用最近一次 reasoning 兜底注入。
+var lastReasoning = struct {
+	sync.RWMutex
+	content string
+	ts      time.Time
+}{}
+
 // cacheReasoningByToolCalls 缓存 reasoning_content，按 tool_call_id 索引
 // 同时存储一份按 reasoning_content 自身的索引（用于无 tool_calls 时回退查找）
 func cacheReasoningByToolCalls(toolCallIDs []string, reasoningContent string) {
@@ -68,6 +77,12 @@ func cacheReasoningByToolCalls(toolCallIDs []string, reasoningContent string) {
 			reasoningCache.entries[id] = entry
 		}
 	}
+
+	// 更新最近 reasoning 兜底
+	lastReasoning.Lock()
+	lastReasoning.content = reasoningContent
+	lastReasoning.ts = time.Now()
+	lastReasoning.Unlock()
 }
 
 // cleanReasoningCacheLocked 清理过期或超量的缓存（调用前需持锁）
@@ -116,6 +131,20 @@ func lookupReasoningByToolCallID(toolCallID string) string {
 		}
 	}
 	return ""
+}
+
+// lookupRecentReasoning 返回最近一次缓存的 reasoning_content（兜底）
+// TTL 内有效，用于 tool_call_id 匹配失败时注入
+func lookupRecentReasoning() string {
+	lastReasoning.RLock()
+	defer lastReasoning.RUnlock()
+	if lastReasoning.content == "" {
+		return ""
+	}
+	if time.Since(lastReasoning.ts) > reasoningCacheTTL {
+		return ""
+	}
+	return lastReasoning.content
 }
 
 // injectReasoningIntoRequestBody 扫描请求 body 中的 messages，
@@ -174,6 +203,15 @@ func injectReasoningIntoRequestBody(body []byte) ([]byte, int) {
 			if r := lookupReasoningByToolCallID(id); r != "" {
 				reasoning = r
 				break
+			}
+		}
+
+		// 兜底：id 精确匹配失败（客户端重新生成 tool_call_id）时，
+		// 用最近一次缓存的 reasoning 注入，避免 upstream 400 报错
+		if reasoning == "" {
+			if r := lookupRecentReasoning(); r != "" {
+				reasoning = r
+				log.Printf("[reasoning] fallback inject via recent reasoning (tool_calls=%d)", len(toolCalls))
 			}
 		}
 

@@ -161,6 +161,8 @@ func processRedisBatch(batch []UsageLog) {
 	byProvider := map[string]*agg{}
 	byModel := map[string]*agg{}
 	byDate := map[string]*agg{}
+	today := time.Now().Format("2006-01-02")
+	byModelToday := map[string]int64{}
 	for _, e := range batch {
 		total.count++
 		total.input += int64(e.InputTokens)
@@ -197,6 +199,11 @@ func processRedisBatch(batch []UsageLog) {
 		d.input += int64(e.InputTokens)
 		d.output += int64(e.OutputTokens)
 		d.total += int64(e.TotalTokens)
+
+		// 当日模型请求次数
+		if date == today {
+			byModelToday[e.Model]++
+		}
 	}
 	// 总计
 	pipe.HIncrBy(ctx, "usage:total", "totalReqs", total.count)
@@ -223,6 +230,10 @@ func processRedisBatch(batch []UsageLog) {
 		pipe.HIncrBy(ctx, "usage:byDate", date+"|input", a.input)
 		pipe.HIncrBy(ctx, "usage:byDate", date+"|output", a.output)
 		pipe.HIncrBy(ctx, "usage:byDate", date+"|total", a.total)
+	}
+	// 当日模型请求次数（按日期为键，避免跨天残留）
+	for model, count := range byModelToday {
+		pipe.HIncrBy(ctx, "usage:byModelToday:"+today, model, count)
 	}
 	pipe.Do(ctx)
 }
@@ -277,6 +288,17 @@ func redisGetUsageStats() map[string]any {
 	result["byModel"] = parseUsageHash(rdb.HGetAll(ctx, "usage:byModel").Result())
 	result["byDate"] = parseUsageHash(rdb.HGetAll(ctx, "usage:byDate").Result())
 
+	// 当日各模型请求次数
+	today := time.Now().Format("2006-01-02")
+	todayModelFields, err := rdb.HGetAll(ctx, "usage:byModelToday:"+today).Result()
+	byModelToday := map[string]int64{}
+	if err == nil {
+		for model, v := range todayModelFields {
+			byModelToday[model] = parseInt64(v)
+		}
+	}
+	result["byModelToday"] = byModelToday
+
 	return result
 }
 
@@ -312,4 +334,7 @@ func redisClearStats() {
 	}
 	ctx := context.Background()
 	rdb.Del(ctx, "usage:total", "usage:byProvider", "usage:byModel", "usage:byDate")
+	// 清空当日模型统计（含历史日期键）
+	today := time.Now().Format("2006-01-02")
+	rdb.Del(ctx, "usage:byModelToday:"+today)
 }
