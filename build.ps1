@@ -25,10 +25,10 @@ Write-Host "[2/4] 检查端口 $port..." -ForegroundColor Yellow
 $conn = Get-NetTCPConnection -LocalPort $port -ErrorAction SilentlyContinue
 if ($conn) {
     $procIds = $conn | Select-Object -ExpandProperty OwningProcess -Unique
-    foreach ($pid in $procIds) {
-        if ($pid -ne 0) {
-            Write-Host "  端口被 PID=$pid 占用，强制释放" -ForegroundColor Gray
-            Stop-Process -Id $pid -Force -ErrorAction SilentlyContinue
+    foreach ($procId in $procIds) {
+        if ($procId -ne 0) {
+            Write-Host "  端口被 PID=$procId 占用，强制释放" -ForegroundColor Gray
+            Stop-Process -Id $procId -Force -ErrorAction SilentlyContinue
         }
     }
     Start-Sleep -Milliseconds 500

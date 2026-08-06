@@ -86,20 +86,38 @@ type ModelAlias struct {
 	Model        string `json:"model"`        // 实际使用的模型
 }
 
+// FailoverEntry 主备路由中的一个站点（按优先级 1/2/3 排列）
+type FailoverEntry struct {
+	Order      int    `json:"order"`      // 优先级：1 主站，2 备站，3 备站
+	ProviderID string `json:"providerId"` // 站点 ID
+	Model      string `json:"model"`      // 该站点使用的模型
+}
+
+// FailoverRoute 主备路由
+// 客户端用固定模型名调用，主站连续失败（3 次重试后仍失败）时顺延下一个站点，
+// 最多支持 3 个站点（1 主 2 备）。仅当请求模型命中该路由时才启用此效果。
+type FailoverRoute struct {
+	ID      string          `json:"id"`
+	Name    string          `json:"name"`    // 客户端请求时用的模型名
+	Entries []FailoverEntry `json:"entries"` // 按优先级排序，最多 3 个
+}
+
 // Config 持久化配置
 type Config struct {
-	Providers []Provider   `json:"providers"`
-	APIKeys   []APIKey     `json:"apiKeys"`
-	Aliases   []ModelAlias `json:"aliases"`
-	Settings  Settings     `json:"settings"`
-	UsageLogs []UsageLog   `json:"usageLogs,omitempty"` // 已迁移到SQLite，保留字段向后兼容
-	idx       configIndex  `json:"-"`                   // 预计算索引，不序列化
+	Providers []Provider     `json:"providers"`
+	APIKeys   []APIKey       `json:"apiKeys"`
+	Aliases   []ModelAlias   `json:"aliases"`
+	Failovers []FailoverRoute `json:"failovers"` // 主备路由
+	Settings  Settings       `json:"settings"`
+	UsageLogs []UsageLog     `json:"usageLogs,omitempty"` // 已迁移到SQLite，保留字段向后兼容
+	idx       configIndex    `json:"-"`                   // 预计算索引，不序列化
 }
 
 // configIndex 预计算索引，将热路径 O(n) 查找优化为 O(1)
 type configIndex struct {
-	apiKeySet        map[string]bool       // API Key 验证：key -> active
-	aliasMap         map[string]ModelAlias // 别名查找：aliasName -> alias
-	providerMap      map[string]int        // 站点查找：providerID -> slice index
-	activeProviderIdx int                   // 活跃站点在 Providers 中的下标，-1 表示无
+	apiKeySet         map[string]bool        // API Key 验证：key -> active
+	aliasMap          map[string]ModelAlias  // 别名查找：aliasName -> alias
+	failoverMap       map[string]FailoverRoute // 主备路由查找：name -> route
+	providerMap       map[string]int         // 站点查找：providerID -> slice index
+	activeProviderIdx int                     // 活跃站点在 Providers 中的下标，-1 表示无
 }

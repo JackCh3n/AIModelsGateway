@@ -131,6 +131,15 @@ func proxyRequest(w http.ResponseWriter, r *http.Request, clientFormat string, p
 		}
 	}
 
+	// 主备路由：模型名命中主备路由时，按优先级依次尝试站点（3次失败顺延下一个）
+	if model != "" && providerOverride == "" {
+		if fo := getFailoverByName(model); fo != nil {
+			log.Printf("[failover] 命中主备路由 %s (entries=%d)", fo.Name, len(fo.Entries))
+			proxyFailoverRequest(w, r, clientFormat, fo, body, params, isStream)
+			return
+		}
+	}
+
 	var provider *Provider
 	if providerOverride != "" {
 		provider = getProvider(providerOverride)
@@ -150,6 +159,14 @@ func proxyRequest(w http.ResponseWriter, r *http.Request, clientFormat string, p
 		return
 	}
 
+	// 转发到单个站点（普通模式：默认活跃站点或指定站点）
+	forwardToProvider(w, r, clientFormat, provider, model, body, params, isStream)
+}
+
+// forwardToProvider 转发请求到单个站点（含格式转换、重试、响应处理）。
+// 返回 handled=false 表示该站点调用失败且错误未写入响应（可顺延到备用站点）；
+// handled=true 表示响应已写入（成功或已返回错误给客户端）。
+func forwardToProvider(w http.ResponseWriter, r *http.Request, clientFormat string, provider *Provider, model string, body []byte, params map[string]any, isStream bool) (handled bool) {
 	// 模型为空或 "all" 时，使用站点的默认模型
 	if model == "" || model == "all" {
 		if provider.DefaultModel != "" {
@@ -170,7 +187,7 @@ func proxyRequest(w http.ResponseWriter, r *http.Request, clientFormat string, p
 		}
 		if inList && !isModelEnabled(provider, model) {
 			writeError(w, clientFormat, http.StatusForbidden, "该模型已被禁用: "+model+"（请在管理后台启用）")
-			return
+			return true
 		}
 	}
 
@@ -199,7 +216,7 @@ func proxyRequest(w http.ResponseWriter, r *http.Request, clientFormat string, p
 			converted, err := anthropicToOpenAIReq(body)
 			if err != nil {
 				writeError(w, clientFormat, http.StatusBadRequest, "convert request: "+err.Error())
-				return
+				return true
 			}
 			upstreamBody, _ = json.Marshal(converted)
 		} else if clientFormat == "openai" && provider.Format == "anthropic" {
@@ -207,7 +224,7 @@ func proxyRequest(w http.ResponseWriter, r *http.Request, clientFormat string, p
 			converted, err := openAIToAnthropicReq(body)
 			if err != nil {
 				writeError(w, clientFormat, http.StatusBadRequest, "convert request: "+err.Error())
-				return
+				return true
 			}
 			upstreamBody, _ = json.Marshal(converted)
 		}
@@ -246,7 +263,7 @@ func proxyRequest(w http.ResponseWriter, r *http.Request, clientFormat string, p
 		req, err := http.NewRequest("POST", upstreamURL, bytes.NewReader(upstreamBody))
 		if err != nil {
 			writeError(w, clientFormat, http.StatusInternalServerError, "create request: "+err.Error())
-			return
+			return true
 		}
 		// 绑定客户端 Context：客户端断开时自动取消上游请求，避免资源泄漏
 		req = req.WithContext(r.Context())
@@ -269,7 +286,7 @@ func proxyRequest(w http.ResponseWriter, r *http.Request, clientFormat string, p
 		if err != nil {
 			log.Printf("  upstream error: %v", err)
 			writeError(w, clientFormat, http.StatusBadGateway, "upstream request failed: "+err.Error())
-			return
+			return true
 		}
 
 		if resp.StatusCode == http.StatusOK {
@@ -290,16 +307,16 @@ func proxyRequest(w http.ResponseWriter, r *http.Request, clientFormat string, p
 				select {
 				case <-time.After(delay):
 				case <-r.Context().Done():
-					return // 客户端已断开，放弃重试
+					return true // 客户端已断开，放弃重试
 				}
 				continue
 			}
 		}
 
-		// 不可重试错误，或重试次数耗尽
+		// 不可重试错误，或重试次数耗尽：
+		// 返回 handled=false 让主备路由顺延到下一个站点
 		log.Printf("  upstream %d: %s", lastStatus, truncate(string(lastBody), 500))
-		writeError(w, clientFormat, lastStatus, fmt.Sprintf("upstream %d: %s", lastStatus, truncate(string(lastBody), 300)))
-		return
+		return false
 	}
 	defer resp.Body.Close()
 
@@ -308,6 +325,45 @@ func proxyRequest(w http.ResponseWriter, r *http.Request, clientFormat string, p
 	} else {
 		handleNonStreamProxy(w, resp, clientFormat, provider.Format, provider, model)
 	}
+	return true
+}
+
+// proxyFailoverRequest 主备路由转发：按优先级依次尝试 entries 中的站点。
+// 站点调用失败（3 次重试后仍失败）时顺延下一个站点，最多 3 个站点；
+// 全部失败时返回最后一个站点的错误信息。
+func proxyFailoverRequest(w http.ResponseWriter, r *http.Request, clientFormat string, fo *FailoverRoute, body []byte, params map[string]any, isStream bool) {
+	if len(fo.Entries) == 0 {
+		writeError(w, clientFormat, http.StatusServiceUnavailable, "主备路由无可用站点: "+fo.Name)
+		return
+	}
+
+	var lastErr string
+	for i, entry := range fo.Entries {
+		provider := getProvider(entry.ProviderID)
+		if provider == nil {
+			lastErr = fmt.Sprintf("主备路由 %s 站点 %s 不存在", fo.Name, entry.ProviderID)
+			log.Printf("[failover] %s: %s", fo.Name, lastErr)
+			continue
+		}
+		if provider.Status != "active" {
+			lastErr = fmt.Sprintf("主备路由 %s 站点 %s 已禁用", fo.Name, provider.Name)
+			log.Printf("[failover] %s: %s", fo.Name, lastErr)
+			continue
+		}
+
+		log.Printf("[failover] %s: 尝试站点 %s (order=%d, model=%s)", fo.Name, provider.Name, entry.Order, entry.Model)
+		handled := forwardToProvider(w, r, clientFormat, provider, entry.Model, body, params, isStream)
+		if handled {
+			return // 该站点成功或错误已写入响应
+		}
+		lastErr = fmt.Sprintf("主备路由 %s 全部站点失败，最后尝试: %s", fo.Name, provider.Name)
+		if i < len(fo.Entries)-1 {
+			log.Printf("[failover] %s: 站点 %s 失败，顺延下一个", fo.Name, provider.Name)
+		}
+	}
+
+	// 全部站点失败，返回最后错误（HTTP 502）
+	writeError(w, clientFormat, http.StatusBadGateway, lastErr)
 }
 
 func handleNonStreamProxy(w http.ResponseWriter, resp *http.Response, clientFormat, providerFormat string, provider *Provider, model string) {

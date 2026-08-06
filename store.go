@@ -67,6 +67,9 @@ func loadConfigFromFile() {
 	if c.Aliases == nil {
 		c.Aliases = []ModelAlias{}
 	}
+	if c.Failovers == nil {
+		c.Failovers = []FailoverRoute{}
+	}
 	if c.UsageLogs == nil {
 		c.UsageLogs = []UsageLog{}
 	}
@@ -118,6 +121,7 @@ func buildIndex(cfg *Config) configIndex {
 	idx := configIndex{
 		apiKeySet:         make(map[string]bool),
 		aliasMap:          make(map[string]ModelAlias),
+		failoverMap:       make(map[string]FailoverRoute),
 		providerMap:       make(map[string]int),
 		activeProviderIdx: -1,
 	}
@@ -131,6 +135,9 @@ func buildIndex(cfg *Config) configIndex {
 	}
 	for _, a := range cfg.Aliases {
 		idx.aliasMap[a.Name] = a
+	}
+	for _, f := range cfg.Failovers {
+		idx.failoverMap[f.Name] = f
 	}
 	if cfg.Settings.ActiveProviderID != "" {
 		if i, ok := idx.providerMap[cfg.Settings.ActiveProviderID]; ok && cfg.Providers[i].Status == "active" {
@@ -197,6 +204,16 @@ func shallowCopyConfig(old *Config) Config {
 	}
 	if old.Aliases != nil {
 		newCfg.Aliases = append([]ModelAlias{}, old.Aliases...)
+	}
+	if old.Failovers != nil {
+		newCfg.Failovers = make([]FailoverRoute, len(old.Failovers))
+		copy(newCfg.Failovers, old.Failovers)
+		for i := range newCfg.Failovers {
+			f := &newCfg.Failovers[i]
+			if f.Entries != nil {
+				f.Entries = append([]FailoverEntry{}, f.Entries...)
+			}
+		}
 	}
 	return newCfg
 }
@@ -556,6 +573,76 @@ func getAliasByModel(model string) *ModelAlias {
 	cfg := loadConfig()
 	if a, ok := cfg.idx.aliasMap[model]; ok {
 		return &a
+	}
+	return nil
+}
+
+// --- Failover 主备路由 ---
+
+func listFailovers() []FailoverRoute {
+	cfg := loadConfig()
+	result := make([]FailoverRoute, len(cfg.Failovers))
+	copy(result, cfg.Failovers)
+	return result
+}
+
+func addFailover(f FailoverRoute) FailoverRoute {
+	f.ID = generateID("fo")
+	sortFailoverEntries(&f)
+	mutateConfig(func(cfg *Config) {
+		cfg.Failovers = append(cfg.Failovers, f)
+	})
+	return f
+}
+
+func updateFailover(f FailoverRoute) bool {
+	updated := false
+	sortFailoverEntries(&f)
+	mutateConfig(func(cfg *Config) {
+		for i := range cfg.Failovers {
+			if cfg.Failovers[i].ID == f.ID {
+				cfg.Failovers[i] = f
+				updated = true
+				return
+			}
+		}
+	})
+	return updated
+}
+
+func deleteFailover(id string) bool {
+	deleted := false
+	mutateConfig(func(cfg *Config) {
+		for i := range cfg.Failovers {
+			if cfg.Failovers[i].ID == id {
+				cfg.Failovers = append(cfg.Failovers[:i], cfg.Failovers[i+1:]...)
+				deleted = true
+				return
+			}
+		}
+	})
+	return deleted
+}
+
+// sortFailoverEntries 按优先级排序（1 主站优先），并截断最多 3 个
+func sortFailoverEntries(f *FailoverRoute) {
+	entries := f.Entries
+	for i := 1; i < len(entries); i++ {
+		for j := i; j > 0 && entries[j].Order < entries[j-1].Order; j-- {
+			entries[j], entries[j-1] = entries[j-1], entries[j]
+		}
+	}
+	if len(entries) > 3 {
+		entries = entries[:3]
+	}
+	f.Entries = entries
+}
+
+// getFailoverByName 根据模型名查找主备路由（O(1)）
+func getFailoverByName(model string) *FailoverRoute {
+	cfg := loadConfig()
+	if f, ok := cfg.idx.failoverMap[model]; ok {
+		return &f
 	}
 	return nil
 }

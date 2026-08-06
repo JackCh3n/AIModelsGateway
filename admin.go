@@ -434,6 +434,54 @@ func registerAdminRoutes(mux *http.ServeMux) {
 		}
 	}))
 
+	// --- 主备路由 CRUD ---
+	mux.HandleFunc("/admin/api/failovers", corsHandler(func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case "GET":
+			writeJSON(w, http.StatusOK, listFailovers())
+		case "POST":
+			var f FailoverRoute
+			if err := json.NewDecoder(r.Body).Decode(&f); err != nil {
+				writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+				return
+			}
+			f = addFailover(f)
+			writeJSON(w, http.StatusOK, f)
+		default:
+			writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		}
+	}))
+
+	mux.HandleFunc("/admin/api/failovers/", corsHandler(func(w http.ResponseWriter, r *http.Request) {
+		id := strings.TrimPrefix(r.URL.Path, "/admin/api/failovers/")
+		if id == "" {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "id required"})
+			return
+		}
+		switch r.Method {
+		case "PUT":
+			var f FailoverRoute
+			if err := json.NewDecoder(r.Body).Decode(&f); err != nil {
+				writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+				return
+			}
+			f.ID = id
+			if !updateFailover(f) {
+				writeJSON(w, http.StatusNotFound, map[string]string{"error": "failover not found"})
+				return
+			}
+			writeJSON(w, http.StatusOK, f)
+		case "DELETE":
+			if !deleteFailover(id) {
+				writeJSON(w, http.StatusNotFound, map[string]string{"error": "failover not found"})
+				return
+			}
+			writeJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
+		default:
+			writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		}
+	}))
+
 	// --- 中转站导出/导入 ---
 	// 导出单个: GET /admin/api/providers/export/{id}
 	mux.HandleFunc("/admin/api/providers/export/", corsHandler(func(w http.ResponseWriter, r *http.Request) {

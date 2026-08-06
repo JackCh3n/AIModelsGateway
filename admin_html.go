@@ -174,6 +174,11 @@ tr:hover{background:var(--hover)}
 <p style="color:var(--muted);font-size:13px;margin-bottom:16px">客户端用固定的模型名调用网关，网关自动路由到指定的站点和模型。切换实际模型时只需修改别名，无需改客户端配置。</p>
 <div id="aliasList"></div>
 </div>
+<div class="card">
+<div class="card-title">主备路由 <button class="btn btn-primary" onclick="showFailoverModal()">+ 添加主备路由</button></div>
+<p style="color:var(--muted);font-size:13px;margin-bottom:16px">客户端用固定的模型名调用网关，按优先级（1主 2备 3备，最多3个站点）依次尝试。主站调用失败（3次重试后仍失败）自动顺延下一个站点。只有客户端请求的模型名命中主备路由时才启用此效果。</p>
+<div id="failoverList"></div>
+</div>
 </div>
 
 <!-- API Keys -->
@@ -554,6 +559,27 @@ tr:hover{background:var(--hover)}
 <div class="modal-actions">
 <button class="btn btn-outline" onclick="closeModal('aliasModal')">取消</button>
 <button class="btn btn-primary" onclick="saveAlias()">保存</button>
+</div>
+</div>
+</div>
+
+<!-- Failover Modal -->
+<div class="modal-overlay" id="failoverModal">
+<div class="modal">
+<div class="modal-title" id="failoverModalTitle">添加主备路由</div>
+<input type="hidden" id="failoverId">
+<div class="form-group">
+<label>路由名称 (客户端请求时用的模型名)</label>
+<input class="input" id="failoverName" placeholder="如: workbuddy / default / my-model">
+</div>
+<div class="form-group">
+<label>站点列表（按优先级排序，最多3个：1主 2备 3备）</label>
+<div id="failoverEntries" style="display:flex;flex-direction:column;gap:8px"></div>
+<button class="btn btn-sm btn-outline" style="margin-top:8px" onclick="addFailoverEntry()">+ 添加站点</button>
+</div>
+<div class="modal-actions">
+<button class="btn btn-outline" onclick="closeModal('failoverModal')">取消</button>
+<button class="btn btn-primary" onclick="saveFailover()">保存</button>
 </div>
 </div>
 </div>
@@ -1847,6 +1873,7 @@ const data=await res.json();
 const el=document.getElementById('aliasList');
 if(!data||data.length===0){
 el.innerHTML='<div class="empty">暂无别名，点击右上角添加</div>';
+loadFailovers();
 return;
 }
 const base=location.protocol+'//'+location.host;
@@ -1862,6 +1889,7 @@ html+='</tr>';
 }
 html+='</table>';
 el.innerHTML=html;
+loadFailovers();
 }
 
 async function loadGlobalRoute(){
@@ -1966,6 +1994,170 @@ async function deleteAlias(id){
 if(!confirm('确定删除此别名？'))return;
 const res=await fetch(API+'/aliases/'+id,{method:'DELETE'});
 if(res.ok){toast('已删除','success');loadAliases();}
+}
+
+// --- 主备路由 ---
+let failoverEntriesDraft=[];
+let failoverModelsCache={};
+
+// 构建站点+模型下拉（复用 allProvidersCache）
+function failoverProviderOptions(selected){
+let html='<option value="">— 选择站点 —</option>';
+for(const p of allProvidersCache){
+if(p.status==='active'){
+const sel=p.id===selected?' selected':'';
+html+='<option value="'+p.id+'"'+sel+'>'+esc(p.name)+' ('+p.format+')</option>';
+}
+}
+return html;
+}
+
+function failoverModelOptions(providerId,selected){
+if(!providerId||!failoverModelsCache[providerId])return '<option value="">— 先选站点 —</option>';
+let html='<option value="">— 选择模型 —</option>';
+const disabledSet=new Set(failoverModelsCache[providerId].disabledModels||[]);
+for(const m of (failoverModelsCache[providerId].models||[])){
+if(disabledSet.has(m))continue;
+const sel=m===selected?' selected':'';
+html+='<option value="'+esc(m)+'"'+sel+'>'+esc(m)+'</option>';
+}
+return html;
+}
+
+// 渲染一条主备条目（带排序 1/2/3 和上移下移）
+function renderFailoverEntries(){
+const box=document.getElementById('failoverEntries');
+box.innerHTML='';
+if(failoverEntriesDraft.length===0){
+box.innerHTML='<div class="empty" style="padding:12px">暂无站点，点击下方「+ 添加站点」</div>';
+return;
+}
+failoverEntriesDraft.forEach((e,idx)=>{
+const order=e.order||(idx+1);
+const row=document.createElement('div');
+row.style.cssText='display:flex;gap:8px;align-items:center;border:1px solid var(--border);border-radius:6px;padding:8px;background:var(--bg)';
+const badge=document.createElement('span');
+badge.className='badge '+(order===1?'badge-active':'badge-openai');
+badge.textContent='#'+order;
+row.appendChild(badge);
+// 站点下拉
+const sel=document.createElement('select');
+sel.className='select';
+sel.style.flex='1';
+sel.innerHTML=failoverProviderOptions(e.providerId);
+sel.onchange=()=>{e.providerId=sel.value;e.model='';renderFailoverEntries();};
+row.appendChild(sel);
+// 模型下拉
+const msel=document.createElement('select');
+msel.className='select';
+msel.style.flex='1';
+msel.innerHTML=failoverModelOptions(e.providerId,e.model);
+msel.onchange=()=>{e.model=msel.value;};
+row.appendChild(msel);
+// 上移/下移/删除
+const up=document.createElement('button');
+up.className='btn btn-sm btn-outline';
+up.textContent='↑';
+up.onclick=()=>{if(idx>0){[failoverEntriesDraft[idx-1],failoverEntriesDraft[idx]]=[failoverEntriesDraft[idx],failoverEntriesDraft[idx-1]];renderFailoverEntries();}};
+row.appendChild(up);
+const down=document.createElement('button');
+down.className='btn btn-sm btn-outline';
+down.textContent='↓';
+down.onclick=()=>{if(idx<failoverEntriesDraft.length-1){[failoverEntriesDraft[idx+1],failoverEntriesDraft[idx]]=[failoverEntriesDraft[idx],failoverEntriesDraft[idx+1]];renderFailoverEntries();}};
+row.appendChild(down);
+const del=document.createElement('button');
+del.className='btn btn-sm btn-danger';
+del.textContent='×';
+del.onclick=()=>{failoverEntriesDraft.splice(idx,1);renderFailoverEntries();};
+row.appendChild(del);
+box.appendChild(row);
+});
+}
+
+function addFailoverEntry(){
+if(failoverEntriesDraft.length>=3){toast('最多支持3个站点','error');return;}
+failoverEntriesDraft.push({order:failoverEntriesDraft.length+1,providerId:'',model:''});
+renderFailoverEntries();
+}
+
+function showFailoverModal(){
+document.getElementById('failoverModalTitle').textContent='添加主备路由';
+document.getElementById('failoverId').value='';
+document.getElementById('failoverName').value='';
+failoverEntriesDraft=[];
+renderFailoverEntries();
+document.getElementById('failoverModal').classList.add('show');
+}
+
+async function editFailover(id){
+const res=await fetch(API+'/failovers');
+const data=await res.json();
+const f=data.find(x=>x.id===id);
+if(!f)return;
+document.getElementById('failoverModalTitle').textContent='编辑主备路由';
+document.getElementById('failoverId').value=f.id;
+document.getElementById('failoverName').value=f.name;
+failoverEntriesDraft=(f.entries||[]).map(e=>({order:e.order,providerId:e.providerId,model:e.model}));
+renderFailoverEntries();
+document.getElementById('failoverModal').classList.add('show');
+}
+
+async function saveFailover(){
+const id=document.getElementById('failoverId').value;
+const name=document.getElementById('failoverName').value.trim();
+const entries=failoverEntriesDraft.filter(e=>e.providerId&&e.model);
+if(!name){toast('请填写路由名称','error');return;}
+if(entries.length===0){toast('请至少添加一个站点','error');return;}
+// 按当前顺序重新编号 1/2/3
+const body={
+name:name,
+entries:entries.map((e,i)=>({order:i+1,providerId:e.providerId,model:e.model}))
+};
+const method=id?'PUT':'POST';
+const url=id?API+'/failovers/'+id:API+'/failovers';
+const res=await fetch(url,{method,headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+if(res.ok){
+closeModal('failoverModal');
+toast(id?'已更新':'已添加','success');
+loadFailovers();
+}else{
+toast('操作失败','error');
+}
+}
+
+async function deleteFailover(id){
+if(!confirm('确定删除此主备路由？'))return;
+const res=await fetch(API+'/failovers/'+id,{method:'DELETE'});
+if(res.ok){toast('已删除','success');loadFailovers();}
+}
+
+async function loadFailovers(){
+const res=await fetch(API+'/failovers');
+const data=await res.json();
+const el=document.getElementById('failoverList');
+if(!data||data.length===0){
+el.innerHTML='<div class="empty">暂无主备路由，点击右上角添加</div>';
+return;
+}
+// 构建模型缓存
+failoverModelsCache={};
+for(const p of allProvidersCache)failoverModelsCache[p.id]=p;
+let html='<table><tr><th>路由名</th><th>优先级</th><th>站点 / 模型</th><th>操作</th></tr>';
+for(const f of data){
+html+='<tr>';
+html+='<td class="mono">'+esc(f.name)+'</td>';
+html+='<td>';
+for(const e of (f.entries||[])){
+const p=allProvidersCache.find(x=>x.id===e.providerId);
+const badgeCls=e.order===1?'badge-active':'badge-openai';
+html+='<div style="margin:2px 0"><span class="badge '+badgeCls+'">#'+e.order+'</span> <span style="font-size:12px">'+esc(p?p.name:e.providerId)+' / <span class="mono">'+esc(e.model)+'</span></span></div>';
+}
+html+='</td>';
+html+='<td><button class="btn btn-sm btn-outline" onclick="editFailover(\''+f.id+'\')">编辑</button> <button class="btn btn-sm btn-danger" onclick="deleteFailover(\''+f.id+'\')">删除</button></td>';
+html+='</tr>';
+}
+html+='</table>';
+el.innerHTML=html;
 }
 
 // --- Keys ---
