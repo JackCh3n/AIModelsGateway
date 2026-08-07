@@ -165,18 +165,18 @@ tr:hover{background:var(--hover)}
 <!-- 模型路由 -->
 <div class="panel" id="panel-aliases">
 <div class="card">
-<div class="card-title">全局默认路由</div>
-<p style="color:var(--muted);font-size:13px;margin-bottom:16px">客户端不指定站点时，默认路由到当前启用的站点和默认模型。</p>
+<div class="card-title">① 全局默认路由</div>
+<p style="color:var(--muted);font-size:13px;margin-bottom:16px">客户端请求 <span class="mono">model</span> 填 <span class="mono">all</span>（或留空）时，路由到当前启用的站点和默认模型。</p>
 <div id="globalRouteInfo"></div>
 </div>
 <div class="card">
-<div class="card-title">模型路由别名 <button class="btn btn-primary" onclick="showAliasModal()">+ 添加别名</button></div>
-<p style="color:var(--muted);font-size:13px;margin-bottom:16px">客户端用固定的模型名调用网关，网关自动路由到指定的站点和模型。切换实际模型时只需修改别名，无需改客户端配置。</p>
+<div class="card-title">② 模型路由 <button class="btn btn-primary" onclick="showAliasModal()">+ 添加路由</button></div>
+<p style="color:var(--muted);font-size:13px;margin-bottom:16px">客户端请求 <span class="mono">model</span> 填 <strong>路由名</strong>（自定义别名）时，网关自动路由到指定站点的指定模型，相当于①的固定路由。</p>
 <div id="aliasList"></div>
 </div>
 <div class="card">
-<div class="card-title">主备路由 <button class="btn btn-primary" onclick="showFailoverModal()">+ 添加主备路由</button></div>
-<p style="color:var(--muted);font-size:13px;margin-bottom:16px">客户端用固定的模型名调用网关，按优先级（1主 2备 3备，最多3个站点）依次尝试。主站调用失败（3次重试后仍失败）自动顺延下一个站点。只有客户端请求的模型名命中主备路由时才启用此效果。</p>
+<div class="card-title">③ 主备路由 <button class="btn btn-primary" onclick="showFailoverModal()">+ 添加主备路由</button></div>
+<p style="color:var(--muted);font-size:13px;margin-bottom:16px">客户端请求 <span class="mono">model</span> 填 <strong>路由名</strong> 时，按优先级（1主 2备 3备，最多3个站点）依次尝试。主站调用失败（3次重试后仍失败）自动顺延下一个站点。</p>
 <div id="failoverList"></div>
 </div>
 </div>
@@ -542,10 +542,10 @@ tr:hover{background:var(--hover)}
 <!-- Alias Modal -->
 <div class="modal-overlay" id="aliasModal">
 <div class="modal">
-<div class="modal-title" id="aliasModalTitle">添加路由别名</div>
+<div class="modal-title" id="aliasModalTitle">添加路由</div>
 <input type="hidden" id="aliasId">
 <div class="form-group">
-<label>别名 (客户端请求时用的模型名)</label>
+<label>路由名 (客户端 model 填此值)</label>
 <input class="input" id="aliasName" placeholder="如: workbuddy / default / my-model">
 </div>
 <div class="form-group">
@@ -569,7 +569,7 @@ tr:hover{background:var(--hover)}
 <div class="modal-title" id="failoverModalTitle">添加主备路由</div>
 <input type="hidden" id="failoverId">
 <div class="form-group">
-<label>路由名称 (客户端请求时用的模型名)</label>
+<label>路由名 (客户端 model 填此值)</label>
 <input class="input" id="failoverName" placeholder="如: workbuddy / default / my-model">
 </div>
 <div class="form-group">
@@ -1864,7 +1864,7 @@ toast('复制失败','error');
 }
 }
 
-// --- 模型路由别名 ---
+// --- 模型路由（别名） ---
 async function loadAliases(){
 // 加载全局路由信息
 await loadGlobalRoute();
@@ -1877,13 +1877,13 @@ loadFailovers();
 return;
 }
 const base=location.protocol+'//'+location.host;
-let html='<table><tr><th>别名</th><th>目标站点</th><th>实际模型</th><th>调用URL</th><th>操作</th></tr>';
+let html='<table><tr><th>路由名</th><th>目标站点</th><th>实际模型</th><th>调用方式</th><th>操作</th></tr>';
 for(const a of data){
 html+='<tr>';
 html+='<td class="mono">'+esc(a.name)+'</td>';
 html+='<td>'+esc(a.providerName||a.providerId)+'</td>';
 html+='<td class="mono">'+esc(a.model)+'</td>';
-html+='<td><div class="url-with-copy"><span class="mono" style="font-size:11px">'+base+'/v1/chat/completions</span> <button class="copy-btn" onclick="copyText(\''+base+'/v1/chat/completions\',this)">复制</button></div></td>';
+html+='<td class="mono" style="font-size:11px">model: '+esc(a.name)+'</td>';
 html+='<td><button class="btn btn-sm btn-outline" onclick="editAlias(\''+a.id+'\')">编辑</button> <button class="btn btn-sm btn-danger" onclick="deleteAlias(\''+a.id+'\')">删除</button></td>';
 html+='</tr>';
 }
@@ -1911,6 +1911,7 @@ const providerUrl=base+'/v1/chat/completions/p/'+activeProvider.id;
 let html='<table>';
 html+='<tr><td style="width:120px;color:var(--muted)">启用站点</td><td><strong>'+esc(activeProvider.name)+'</strong> <span class="badge badge-'+activeProvider.format+'">'+activeProvider.format+'</span></td></tr>';
 html+='<tr><td style="color:var(--muted)">默认模型</td><td class="mono">'+esc(activeProvider.defaultModel||'未设置')+'</td></tr>';
+html+='<tr><td style="color:var(--muted)">调用方式</td><td class="mono" style="font-size:12px">model: all（或留空）</td></tr>';
 html+='<tr><td style="color:var(--muted)">站点地址</td><td class="mono" style="font-size:12px">'+esc(activeProvider.baseUrl)+'</td></tr>';
 html+='<tr><td style="color:var(--muted)">已启用模型</td><td style="font-size:12px">'+activeProvider.models.filter(m=>!(activeProvider.disabledModels||[]).includes(m)).length+' 个</td></tr>';
 html+='<tr><td style="color:var(--muted)">Base URL</td><td><div class="url-with-copy"><span class="mono" style="font-size:11px">'+baseUrl+'</span> <button class="copy-btn" onclick="copyText(\''+baseUrl+'\',this)">复制</button></div></td></tr>';
@@ -1922,7 +1923,7 @@ el.innerHTML=html;
 }
 
 function showAliasModal(){
-document.getElementById('aliasModalTitle').textContent='添加路由别名';
+document.getElementById('aliasModalTitle').textContent='添加路由';
 document.getElementById('aliasId').value='';
 document.getElementById('aliasName').value='';
 // 填充站点下拉
@@ -1955,7 +1956,7 @@ const res=await fetch(API+'/aliases');
 const data=await res.json();
 const a=data.find(x=>x.id===id);
 if(!a)return;
-document.getElementById('aliasModalTitle').textContent='编辑路由别名';
+document.getElementById('aliasModalTitle').textContent='编辑路由';
 document.getElementById('aliasId').value=a.id;
 document.getElementById('aliasName').value=a.name;
 const sel=document.getElementById('aliasProvider');
@@ -2107,7 +2108,7 @@ async function saveFailover(){
 const id=document.getElementById('failoverId').value;
 const name=document.getElementById('failoverName').value.trim();
 const entries=failoverEntriesDraft.filter(e=>e.providerId&&e.model);
-if(!name){toast('请填写路由名称','error');return;}
+if(!name){toast('请填写路由名','error');return;}
 if(entries.length===0){toast('请至少添加一个站点','error');return;}
 // 按当前顺序重新编号 1/2/3
 const body={
@@ -2141,7 +2142,7 @@ if(!data||data.length===0){
 el.innerHTML='<div class="empty">暂无主备路由，点击右上角添加</div>';
 return;
 }
-let html='<table><tr><th>路由名</th><th>优先级</th><th>站点 / 模型</th><th>操作</th></tr>';
+let html='<table><tr><th>路由名</th><th>优先级</th><th>站点 / 模型</th><th>调用方式</th><th>操作</th></tr>';
 for(const f of data){
 html+='<tr>';
 html+='<td class="mono">'+esc(f.name)+'</td>';
@@ -2152,6 +2153,7 @@ const badgeCls=e.order===1?'badge-active':'badge-openai';
 html+='<div style="margin:2px 0"><span class="badge '+badgeCls+'">#'+e.order+'</span> <span style="font-size:12px">'+esc(p?p.name:e.providerId)+' / <span class="mono">'+esc(e.model)+'</span></span></div>';
 }
 html+='</td>';
+html+='<td class="mono" style="font-size:11px">model: '+esc(f.name)+'</td>';
 html+='<td><button class="btn btn-sm btn-outline" onclick="editFailover(\''+f.id+'\')">编辑</button> <button class="btn btn-sm btn-danger" onclick="deleteFailover(\''+f.id+'\')">删除</button></td>';
 html+='</tr>';
 }
