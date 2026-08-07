@@ -171,9 +171,13 @@ func forwardToProvider(w http.ResponseWriter, r *http.Request, clientFormat stri
 	if model == "" || model == "all" {
 		if provider.DefaultModel != "" {
 			model = provider.DefaultModel
-			params["model"] = model
-			body, _ = json.Marshal(params)
 		}
+	}
+
+	// 将实际使用的模型写入请求体（主备路由每个站点可能配置不同模型名）
+	if model != "" {
+		params["model"] = model
+		body, _ = json.Marshal(params)
 	}
 
 	// 校验该模型是否在该站点已启用（仅当站点有模型列表时校验）
