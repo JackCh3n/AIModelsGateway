@@ -286,6 +286,12 @@ func forwardToProvider(w http.ResponseWriter, r *http.Request, clientFormat stri
 			req.Header.Set(k, v)
 		}
 
+		// 全局自定义 User-Agent：覆盖 Go 默认的 go-http-client/1.1
+		// 仅当站点未单独配置 User-Agent 时生效
+		if ua := getSettings().UserAgent; ua != "" && req.Header.Get("User-Agent") == "" {
+			req.Header.Set("User-Agent", ua)
+		}
+
 		resp, err = getHTTPClient(provider).Do(req)
 		if err != nil {
 			log.Printf("  upstream error: %v", err)

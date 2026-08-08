@@ -236,6 +236,10 @@ tr:hover{background:var(--hover)}
 <div class="panel" id="panel-settings">
 <div class="card">
 <div class="card-title">全局设置</div>
+<div class="form-group" style="margin-bottom:16px">
+<label>全局 User-Agent (转发到上游时的请求头，覆盖默认 go-http-client/1.1)</label>
+<input class="input" id="globalUserAgentInput" placeholder="如: Mozilla/5.0 (Windows NT 10.0; Win64; x64) ... 留空则保持默认">
+</div>
 <div class="form-row">
 <div class="form-group">
 <label>输入预算预设 (回车添加，或逗号分隔添加多个)</label>
@@ -2350,6 +2354,7 @@ const data=await res.json();
 activeProviderId=data.activeProviderId||'';
 if(data.inputPresets&&data.inputPresets.length)inputPresets=data.inputPresets;
 if(data.outputPresets&&data.outputPresets.length)outputPresets=data.outputPresets;
+document.getElementById('globalUserAgentInput').value=data.userAgent||'';
 renderPresetEditors();
 loadGlobalModelConfigs();
 // 狂暴模式
@@ -2532,7 +2537,7 @@ const ipVal=document.getElementById('inputPresetInput').value.trim();
 if(ipVal&&!inputPresets.includes(ipVal))inputPresets.push(ipVal);
 const opVal=document.getElementById('outputPresetInput').value.trim();
 if(opVal&&!outputPresets.includes(opVal))outputPresets.push(opVal);
-const res=await fetch(API+'/settings',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({activeProviderId:activeProviderId,inputPresets:inputPresets,outputPresets:outputPresets})});
+const res=await fetch(API+'/settings',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({activeProviderId:activeProviderId,inputPresets:inputPresets,outputPresets:outputPresets,userAgent:document.getElementById('globalUserAgentInput').value.trim()})});
 if(res.ok){
 toast('已保存','success');
 }

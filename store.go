@@ -792,6 +792,8 @@ func updateSettings(s Settings) {
 		cfg.Settings.RedisAddr = s.RedisAddr
 		cfg.Settings.RedisPassword = s.RedisPassword
 		cfg.Settings.RedisDB = s.RedisDB
+		// UserAgent 允许清空（前端每次保存都会携带该字段）
+		cfg.Settings.UserAgent = s.UserAgent
 	})
 	// 狂暴模式切换：开 -> 连 Redis；关 -> 断 Redis；地址变更 -> 重连
 	redisChanged := s.RedisAddr != oldRedisAddr || s.RedisPassword != oldRedisPwd || s.RedisDB != oldRedisDB
