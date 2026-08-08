@@ -353,8 +353,11 @@ func forwardToProvider(w http.ResponseWriter, r *http.Request, clientFormat stri
 	return true
 }
 
+// maxFailoverEntries 主备路由最多支持的站点数
+const maxFailoverEntries = 6
+
 // proxyFailoverRequest 主备路由转发：按优先级依次尝试 entries 中的站点。
-// 站点调用失败（3 次重试后仍失败）时顺延下一个站点，最多 3 个站点；
+// 站点调用失败（3 次重试后仍失败）时顺延下一个站点，最多 6 个站点；
 // 全部失败时返回最后一个站点的错误信息。
 func proxyFailoverRequest(w http.ResponseWriter, r *http.Request, clientFormat string, fo *FailoverRoute, body []byte, params map[string]any, isStream bool) {
 	if len(fo.Entries) == 0 {
@@ -363,29 +366,31 @@ func proxyFailoverRequest(w http.ResponseWriter, r *http.Request, clientFormat s
 	}
 
 	var lastErr string
+	total := len(fo.Entries)
+	log.Printf("[failover] %s: 开始主备路由，共 %d/%d 个站点", fo.Name, total, maxFailoverEntries)
 	for i, entry := range fo.Entries {
 		provider := getProvider(entry.ProviderID)
 		if provider == nil {
 			lastErr = fmt.Sprintf("主备路由 %s 站点 %s 不存在", fo.Name, entry.ProviderID)
-			log.Printf("[failover] %s: %s", fo.Name, lastErr)
+			log.Printf("[failover] %s: [%d/%d] 站点 %s 不存在", fo.Name, i+1, total, entry.ProviderID)
 			continue
 		}
 		if provider.Status != "active" {
 			lastErr = fmt.Sprintf("主备路由 %s 站点 %s 已禁用", fo.Name, provider.Name)
-			log.Printf("[failover] %s: %s", fo.Name, lastErr)
+			log.Printf("[failover] %s: [%d/%d] 站点 %s 已禁用", fo.Name, i+1, total, provider.Name)
 			continue
 		}
 
-		log.Printf("[failover] %s: 尝试站点 %s (order=%d, model=%s)", fo.Name, provider.Name, entry.Order, entry.Model)
+		log.Printf("[failover] %s: [%d/%d] 尝试站点 %s (order=%d, model=%s)", fo.Name, i+1, total, provider.Name, entry.Order, entry.Model)
 		handled := forwardToProvider(w, r, clientFormat, provider, entry.Model, body, params, isStream)
 		if handled {
-			log.Printf("[failover] %s: 站点 %s 成功，返回结果", fo.Name, provider.Name)
+			log.Printf("[failover] %s: [%d/%d] 站点 %s 成功，返回结果", fo.Name, i+1, total, provider.Name)
 			return // 该站点成功或错误已写入响应
 		}
 		lastErr = fmt.Sprintf("主备路由 %s 全部站点失败，最后尝试: %s", fo.Name, provider.Name)
-		log.Printf("[failover] %s: 站点 %s 失败（3次重试耗尽）", fo.Name, provider.Name)
+		log.Printf("[failover] %s: [%d/%d] 站点 %s 失败（3次重试耗尽）", fo.Name, i+1, total, provider.Name)
 		if i < len(fo.Entries)-1 {
-			log.Printf("[failover] %s: 顺延下一个站点", fo.Name)
+			log.Printf("[failover] %s: [%d/%d] 顺延下一个站点", fo.Name, i+1, total)
 		}
 	}
 
