@@ -160,7 +160,11 @@ func proxyRequest(w http.ResponseWriter, r *http.Request, clientFormat string, p
 	}
 
 	// 转发到单个站点（普通模式：默认活跃站点或指定站点）
-	forwardToProvider(w, r, clientFormat, provider, model, body, params, isStream)
+	handled := forwardToProvider(w, r, clientFormat, provider, model, body, params, isStream)
+	// 单站点模式无法顺延，若 forwardToProvider 返回 false（如网络错误重试耗尽），需写错误给客户端
+	if !handled {
+		writeError(w, clientFormat, http.StatusBadGateway, "upstream request failed")
+	}
 }
 
 // forwardToProvider 转发请求到单个站点（含格式转换、重试、响应处理）。
@@ -294,9 +298,20 @@ func forwardToProvider(w http.ResponseWriter, r *http.Request, clientFormat stri
 
 		resp, err = getHTTPClient(provider).Do(req)
 		if err != nil {
-			log.Printf("  upstream error: %v", err)
-			writeError(w, clientFormat, http.StatusBadGateway, "upstream request failed: "+err.Error())
-			return true
+			log.Printf("  [%s] upstream network error: %v", provider.Name, err)
+			if attempt < maxUpstreamRetries {
+				delay := time.Duration(attempt+1) * time.Second
+				log.Printf("  [%s] upstream network error, retry %d/%d after %v",
+					provider.Name, attempt+1, maxUpstreamRetries, delay)
+				select {
+				case <-time.After(delay):
+				case <-r.Context().Done():
+					return true // 客户端已断开，放弃重试
+				}
+				continue
+			}
+			// 重试耗尽：返回 false（不写错误），让主备路由顺延到下一个站点
+			return false
 		}
 
 		if resp.StatusCode == http.StatusOK {
