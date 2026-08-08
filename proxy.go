@@ -159,8 +159,8 @@ func proxyRequest(w http.ResponseWriter, r *http.Request, clientFormat string, p
 		return
 	}
 
-	// 转发到单个站点（普通模式：默认活跃站点或指定站点）
-	handled := forwardToProvider(w, r, clientFormat, provider, model, body, params, isStream)
+	// 转发到单个站点（普通模式：默认活跃站点或指定站点），重试 3 次（延迟 1/2/3s）
+	handled := forwardToProvider(w, r, clientFormat, provider, model, body, params, isStream, 3)
 	// 单站点模式无法顺延，若 forwardToProvider 返回 false（如网络错误重试耗尽），需写错误给客户端
 	if !handled {
 		writeError(w, clientFormat, http.StatusBadGateway, "upstream request failed")
@@ -170,7 +170,7 @@ func proxyRequest(w http.ResponseWriter, r *http.Request, clientFormat string, p
 // forwardToProvider 转发请求到单个站点（含格式转换、重试、响应处理）。
 // 返回 handled=false 表示该站点调用失败且错误未写入响应（可顺延到备用站点）；
 // handled=true 表示响应已写入（成功或已返回错误给客户端）。
-func forwardToProvider(w http.ResponseWriter, r *http.Request, clientFormat string, provider *Provider, model string, body []byte, params map[string]any, isStream bool) (handled bool) {
+func forwardToProvider(w http.ResponseWriter, r *http.Request, clientFormat string, provider *Provider, model string, body []byte, params map[string]any, isStream bool, maxRetries int) (handled bool) {
 	// 模型为空或 "all" 时，使用站点的默认模型
 	if model == "" || model == "all" {
 		if provider.DefaultModel != "" {
@@ -257,16 +257,15 @@ func forwardToProvider(w http.ResponseWriter, r *http.Request, clientFormat stri
 		upstreamURL = strings.TrimSuffix(upstreamURL, "/") + "/messages"
 	}
 
-	// 上游请求重试：上游繁忙（503 SERVICE_BUSY）或限流（429）时自动重试最多 3 次
-	// 重试间隔逐次递增（500ms / 1s / 1.5s），3 次仍失败才将错误返回客户端
-	const maxUpstreamRetries = 3
+	// 上游请求重试：上游繁忙（503 SERVICE_BUSY）、限流（429）或网络错误时自动重试
+	// 重试次数由调用方决定（全局路由 3 次延迟 1/2/3s，主备路由 1 次延迟 1s）
 	apiKey := pickAPIKey(provider)
 
 	var resp *http.Response
 	var lastStatus int
 	var lastBody []byte
 
-	for attempt := 0; attempt <= maxUpstreamRetries; attempt++ {
+	for attempt := 0; attempt <= maxRetries; attempt++ {
 		// 每次重试重新构建请求（body 为 bytes.Reader 需重建）
 		req, err := http.NewRequest("POST", upstreamURL, bytes.NewReader(upstreamBody))
 		if err != nil {
@@ -299,10 +298,10 @@ func forwardToProvider(w http.ResponseWriter, r *http.Request, clientFormat stri
 		resp, err = getHTTPClient(provider).Do(req)
 		if err != nil {
 			log.Printf("  [%s] upstream network error: %v", provider.Name, err)
-			if attempt < maxUpstreamRetries {
+			if attempt < maxRetries {
 				delay := time.Duration(attempt+1) * time.Second
 				log.Printf("  [%s] upstream network error, retry %d/%d after %v",
-					provider.Name, attempt+1, maxUpstreamRetries, delay)
+					provider.Name, attempt+1, maxRetries, delay)
 				select {
 				case <-time.After(delay):
 				case <-r.Context().Done():
@@ -325,10 +324,10 @@ func forwardToProvider(w http.ResponseWriter, r *http.Request, clientFormat stri
 
 		// 仅上游繁忙(503)或限流(429)时重试；其余错误直接返回
 		if resp.StatusCode == http.StatusServiceUnavailable || resp.StatusCode == http.StatusTooManyRequests {
-			if attempt < maxUpstreamRetries {
+			if attempt < maxRetries {
 				delay := time.Duration(attempt+1) * time.Second
 				log.Printf("  [%s] upstream %d (SERVICE_BUSY), retry %d/%d after %v: %s",
-					provider.Name, resp.StatusCode, attempt+1, maxUpstreamRetries, delay, truncate(string(lastBody), 200))
+					provider.Name, resp.StatusCode, attempt+1, maxRetries, delay, truncate(string(lastBody), 200))
 				select {
 				case <-time.After(delay):
 				case <-r.Context().Done():
@@ -382,13 +381,14 @@ func proxyFailoverRequest(w http.ResponseWriter, r *http.Request, clientFormat s
 		}
 
 		log.Printf("[failover] %s: [%d/%d] 尝试站点 %s (order=%d, model=%s)", fo.Name, i+1, total, provider.Name, entry.Order, entry.Model)
-		handled := forwardToProvider(w, r, clientFormat, provider, entry.Model, body, params, isStream)
+		// 主备路由：单站点仅重试 1 次（延迟 1s），失败即顺延到下一个站点
+		handled := forwardToProvider(w, r, clientFormat, provider, entry.Model, body, params, isStream, 1)
 		if handled {
 			log.Printf("[failover] %s: [%d/%d] 站点 %s 成功，返回结果", fo.Name, i+1, total, provider.Name)
 			return // 该站点成功或错误已写入响应
 		}
 		lastErr = fmt.Sprintf("主备路由 %s 全部站点失败，最后尝试: %s", fo.Name, provider.Name)
-		log.Printf("[failover] %s: [%d/%d] 站点 %s 失败（3次重试耗尽）", fo.Name, i+1, total, provider.Name)
+		log.Printf("[failover] %s: [%d/%d] 站点 %s 失败（重试1次后仍失败）", fo.Name, i+1, total, provider.Name)
 		if i < len(fo.Entries)-1 {
 			log.Printf("[failover] %s: [%d/%d] 顺延下一个站点", fo.Name, i+1, total)
 		}
