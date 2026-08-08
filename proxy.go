@@ -311,7 +311,7 @@ func forwardToProvider(w http.ResponseWriter, r *http.Request, clientFormat stri
 		// 仅上游繁忙(503)或限流(429)时重试；其余错误直接返回
 		if resp.StatusCode == http.StatusServiceUnavailable || resp.StatusCode == http.StatusTooManyRequests {
 			if attempt < maxUpstreamRetries {
-				delay := time.Duration(attempt+1) * 500 * time.Millisecond
+				delay := time.Duration(attempt+1) * time.Second
 				log.Printf("  [%s] upstream %d (SERVICE_BUSY), retry %d/%d after %v: %s",
 					provider.Name, resp.StatusCode, attempt+1, maxUpstreamRetries, delay, truncate(string(lastBody), 200))
 				select {
