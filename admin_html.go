@@ -2081,7 +2081,7 @@ box.appendChild(row);
 }
 
 function addFailoverEntry(){
-if(failoverEntriesDraft.length>=3){toast('最多支持3个站点','error');return;}
+if(failoverEntriesDraft.length>=6){toast('最多支持6个站点','error');return;}
 failoverEntriesDraft.push({order:failoverEntriesDraft.length+1,providerId:'',model:''});
 renderFailoverEntries();
 }

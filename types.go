@@ -88,20 +88,20 @@ type ModelAlias struct {
 	Model        string `json:"model"`        // 实际使用的模型
 }
 
-// FailoverEntry 主备路由中的一个站点（按优先级 1/2/3 排列）
+// FailoverEntry 主备路由中的一个站点（按优先级 1/2/3... 排列）
 type FailoverEntry struct {
-	Order      int    `json:"order"`      // 优先级：1 主站，2 备站，3 备站
+	Order      int    `json:"order"`      // 优先级：1 主站，2 备站，3 备站...
 	ProviderID string `json:"providerId"` // 站点 ID
 	Model      string `json:"model"`      // 该站点使用的模型
 }
 
 // FailoverRoute 主备路由
 // 客户端用固定模型名调用，主站连续失败（3 次重试后仍失败）时顺延下一个站点，
-// 最多支持 3 个站点（1 主 2 备）。仅当请求模型命中该路由时才启用此效果。
+// 最多支持 6 个站点（1 主 5 备）。仅当请求模型命中该路由时才启用此效果。
 type FailoverRoute struct {
 	ID      string          `json:"id"`
 	Name    string          `json:"name"`    // 客户端请求时用的模型名
-	Entries []FailoverEntry `json:"entries"` // 按优先级排序，最多 3 个
+	Entries []FailoverEntry `json:"entries"` // 按优先级排序，最多 6 个
 }
 
 // Config 持久化配置

@@ -650,7 +650,7 @@ func deleteFailover(id string) bool {
 	return deleted
 }
 
-// sortFailoverEntries 按优先级排序（1 主站优先），并截断最多 3 个
+// sortFailoverEntries 按优先级排序（1 主站优先），并截断最多 6 个
 func sortFailoverEntries(f *FailoverRoute) {
 	entries := f.Entries
 	for i := 1; i < len(entries); i++ {
@@ -658,8 +658,8 @@ func sortFailoverEntries(f *FailoverRoute) {
 			entries[j], entries[j-1] = entries[j-1], entries[j]
 		}
 	}
-	if len(entries) > 3 {
-		entries = entries[:3]
+	if len(entries) > 6 {
+		entries = entries[:6]
 	}
 	f.Entries = entries
 }
