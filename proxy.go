@@ -312,8 +312,8 @@ func forwardToProvider(w http.ResponseWriter, r *http.Request, clientFormat stri
 		if resp.StatusCode == http.StatusServiceUnavailable || resp.StatusCode == http.StatusTooManyRequests {
 			if attempt < maxUpstreamRetries {
 				delay := time.Duration(attempt+1) * 500 * time.Millisecond
-				log.Printf("  upstream %d (SERVICE_BUSY), retry %d/%d after %v: %s",
-					resp.StatusCode, attempt+1, maxUpstreamRetries, delay, truncate(string(lastBody), 200))
+				log.Printf("  [%s] upstream %d (SERVICE_BUSY), retry %d/%d after %v: %s",
+					provider.Name, resp.StatusCode, attempt+1, maxUpstreamRetries, delay, truncate(string(lastBody), 200))
 				select {
 				case <-time.After(delay):
 				case <-r.Context().Done():
@@ -325,7 +325,7 @@ func forwardToProvider(w http.ResponseWriter, r *http.Request, clientFormat stri
 
 		// 不可重试错误，或重试次数耗尽：
 		// 返回 handled=false 让主备路由顺延到下一个站点
-		log.Printf("  upstream %d: %s", lastStatus, truncate(string(lastBody), 500))
+		log.Printf("  [%s] upstream %d: %s", provider.Name, lastStatus, truncate(string(lastBody), 500))
 		return false
 	}
 	defer resp.Body.Close()
@@ -364,15 +364,18 @@ func proxyFailoverRequest(w http.ResponseWriter, r *http.Request, clientFormat s
 		log.Printf("[failover] %s: 尝试站点 %s (order=%d, model=%s)", fo.Name, provider.Name, entry.Order, entry.Model)
 		handled := forwardToProvider(w, r, clientFormat, provider, entry.Model, body, params, isStream)
 		if handled {
+			log.Printf("[failover] %s: 站点 %s 成功，返回结果", fo.Name, provider.Name)
 			return // 该站点成功或错误已写入响应
 		}
 		lastErr = fmt.Sprintf("主备路由 %s 全部站点失败，最后尝试: %s", fo.Name, provider.Name)
+		log.Printf("[failover] %s: 站点 %s 失败（3次重试耗尽）", fo.Name, provider.Name)
 		if i < len(fo.Entries)-1 {
-			log.Printf("[failover] %s: 站点 %s 失败，顺延下一个", fo.Name, provider.Name)
+			log.Printf("[failover] %s: 顺延下一个站点", fo.Name)
 		}
 	}
 
 	// 全部站点失败，返回最后错误（HTTP 502）
+	log.Printf("[failover] %s: 全部 %d 个站点均失败，返回 502", fo.Name, len(fo.Entries))
 	writeError(w, clientFormat, http.StatusBadGateway, lastErr)
 }
 
