@@ -384,7 +384,7 @@ func proxyFailoverRequest(w http.ResponseWriter, r *http.Request, clientFormat s
 		// 主备路由：单站点仅重试 1 次（延迟 1s），失败即顺延到下一个站点
 		handled := forwardToProvider(w, r, clientFormat, provider, entry.Model, body, params, isStream, 1)
 		if handled {
-			log.Printf("[failover] %s: [%d/%d] 站点 %s 成功，返回结果", fo.Name, i+1, total, provider.Name)
+			log.Printf("[failover] %s: [%d/%d] 站点 %s / 模型 %s 成功，返回结果", fo.Name, i+1, total, provider.Name, entry.Model)
 			return // 该站点成功或错误已写入响应
 		}
 		lastErr = fmt.Sprintf("主备路由 %s 全部站点失败，最后尝试: %s", fo.Name, provider.Name)

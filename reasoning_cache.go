@@ -42,14 +42,23 @@ var reasoningCache = struct {
 	entries: make(map[string]*reasoningEntry),
 }
 
-// lastReasoning 最近一次缓存的 reasoning_content。
+// lastReasoning 最近缓存的多条 reasoning_content（按时间从新到旧，去重）。
 // 兜底场景：部分客户端（如 LiteLLM）在后续请求中会重新生成 tool_call_id，
-// 导致按 id 精确匹配失败。此时用最近一次 reasoning 兜底注入。
+// 导致按 id 精确匹配失败。此时从最近列表中按顺序分配不同的 reasoning 注入，
+// 避免多条不同轮次的消息拿到同一条 reasoning。
 var lastReasoning = struct {
 	sync.RWMutex
+	seq []reasoningSeqItem
+}{}
+
+// reasoningRecentMaxSize 最近 reasoning 兜底列表最大保留条数
+const reasoningRecentMaxSize = 20
+
+// reasoningSeqItem 最近 reasoning 列表中的一条
+type reasoningSeqItem struct {
 	content string
 	ts      time.Time
-}{}
+}
 
 // cacheReasoningByToolCalls 缓存 reasoning_content，按 tool_call_id 索引
 // 同时存储一份按 reasoning_content 自身的索引（用于无 tool_calls 时回退查找）
@@ -78,10 +87,20 @@ func cacheReasoningByToolCalls(toolCallIDs []string, reasoningContent string) {
 		}
 	}
 
-	// 更新最近 reasoning 兜底
+	// 更新最近 reasoning 兜底列表（去重，新的放最前）
 	lastReasoning.Lock()
-	lastReasoning.content = reasoningContent
-	lastReasoning.ts = time.Now()
+	// 移除同内容的旧条目，避免重复
+	filtered := lastReasoning.seq[:0]
+	for _, it := range lastReasoning.seq {
+		if it.content != reasoningContent {
+			filtered = append(filtered, it)
+		}
+	}
+	lastReasoning.seq = filtered
+	lastReasoning.seq = append([]reasoningSeqItem{{content: reasoningContent, ts: time.Now()}}, lastReasoning.seq...)
+	if len(lastReasoning.seq) > reasoningRecentMaxSize {
+		lastReasoning.seq = lastReasoning.seq[:reasoningRecentMaxSize]
+	}
 	lastReasoning.Unlock()
 }
 
@@ -133,18 +152,18 @@ func lookupReasoningByToolCallID(toolCallID string) string {
 	return ""
 }
 
-// lookupRecentReasoning 返回最近一次缓存的 reasoning_content（兜底）
-// TTL 内有效，用于 tool_call_id 匹配失败时注入
-func lookupRecentReasoning() string {
+// lookupRecentReasonings 返回最近缓存的 reasoning_content 列表（从新到旧，TTL 内有效）。
+// 用于一次性取多条不同的 reasoning，供兜底注入时分配，避免多条消息拿到相同内容。
+func lookupRecentReasonings() []string {
 	lastReasoning.RLock()
 	defer lastReasoning.RUnlock()
-	if lastReasoning.content == "" {
-		return ""
+	out := make([]string, 0, len(lastReasoning.seq))
+	for _, it := range lastReasoning.seq {
+		if it.content != "" && time.Since(it.ts) <= reasoningCacheTTL {
+			out = append(out, it.content)
+		}
 	}
-	if time.Since(lastReasoning.ts) > reasoningCacheTTL {
-		return ""
-	}
-	return lastReasoning.content
+	return out
 }
 
 // injectReasoningIntoRequestBody 扫描请求 body 中的 messages，
@@ -165,6 +184,23 @@ func injectReasoningIntoRequestBody(body []byte) ([]byte, int) {
 
 	injected := 0
 	modified := false
+
+	// 兜底分配用的最近 reasoning 列表与游标。
+	// 同一请求内多条消息兜底时，按顺序分配给不同的 reasoning，避免重复。
+	recentPool := lookupRecentReasonings()
+	recentIdx := 0
+	takeRecent := func() string {
+		if len(recentPool) == 0 {
+			return ""
+		}
+		// 优先取当前游标，游标越界则重头循环
+		if recentIdx >= len(recentPool) {
+			recentIdx = 0
+		}
+		r := recentPool[recentIdx]
+		recentIdx++
+		return r
+	}
 
 	for i, m := range messages {
 		msg, ok := m.(map[string]any)
@@ -191,7 +227,7 @@ func injectReasoningIntoRequestBody(body []byte) ([]byte, int) {
 			// DeepSeek 思维模式下，若历史 assistant 消息曾在思维中产出 reasoning，
 			// 客户端(如 LiteLLM)在后续轮次仍要求将其传回，否则 400。
 			// 此处用最近缓存的 reasoning 兜底注入（仅在消息为 assistant 且无 reasoning 时）。
-			if r := lookupRecentReasoning(); r != "" {
+			if r := takeRecent(); r != "" {
 				msg["reasoning_content"] = r
 				messages[i] = msg
 				injected++
@@ -219,9 +255,9 @@ func injectReasoningIntoRequestBody(body []byte) ([]byte, int) {
 		}
 
 		// 兜底：id 精确匹配失败（客户端重新生成 tool_call_id）时，
-		// 用最近一次缓存的 reasoning 注入，避免 upstream 400 报错
+		// 从最近列表按顺序取不同的 reasoning 注入，避免 upstream 400 报错
 		if reasoning == "" {
-			if r := lookupRecentReasoning(); r != "" {
+			if r := takeRecent(); r != "" {
 				reasoning = r
 				log.Printf("[reasoning] fallback inject via recent reasoning (tool_calls=%d)", len(toolCalls))
 			}
