@@ -142,7 +142,7 @@ tr:hover{background:var(--hover)}
 <button class="tab" onclick="switchTab(event,'aliases')">模型路由</button>
 <button class="tab" onclick="switchTab(event,'keys')">API Keys</button>
 <button class="tab" onclick="switchTab(event,'stats')">用量统计</button>
-<button class="tab" onclick="switchTab(event,'errorlogs')">错误日志</button>
+<button class="tab" onclick="switchTab(event,'errorlogs')">调用日志</button>
 <button class="tab" onclick="switchTab(event,'chat')">聊天测试</button>
 <button class="tab" onclick="switchTab(event,'settings')">设置</button>
 <button class="tab" onclick="switchTab(event,'config')">接入配置</button>
@@ -228,19 +228,19 @@ tr:hover{background:var(--hover)}
 </div>
 <div id="statsByModel" style="margin-top:12px"></div>
 </div>
-<div class="card">
-<div class="card-title">最近请求日志 <button class="btn btn-sm btn-danger" style="float:right" onclick="clearLogs()">清空日志</button></div>
-<div id="recentLogs"></div>
-<div id="logPagination" style="display:flex;align-items:center;justify-content:center;gap:8px;margin-top:12px"></div>
-</div>
 </div>
 
-<!-- 错误日志 -->
+<!-- 调用日志 -->
 <div class="panel" id="panel-errorlogs">
 <div class="card">
 <div class="card-title">错误日志</div>
 <div id="errorLogs"></div>
 <div id="errorLogPagination" style="display:flex;align-items:center;justify-content:center;gap:8px;margin-top:12px"></div>
+</div>
+<div class="card">
+<div class="card-title">最近请求日志 <button class="btn btn-sm btn-danger" style="float:right" onclick="clearLogs()">清空日志</button></div>
+<div id="recentLogs"></div>
+<div id="logPagination" style="display:flex;align-items:center;justify-content:center;gap:8px;margin-top:12px"></div>
 </div>
 </div>
 
@@ -650,7 +650,7 @@ document.querySelectorAll('.panel').forEach(p=>p.classList.remove('active'));
 e.target.classList.add('active');
 document.getElementById('panel-'+name).classList.add('active');
 if(name==='stats')loadStats();
-if(name==='errorlogs')loadErrorLogs(errorLogsCurrentPage);
+if(name==='errorlogs'){loadErrorLogs(errorLogsCurrentPage);loadStatsLogs(statsCurrentPage);}
 if(name==='config')loadConfig();
 if(name==='settings')loadSettings();
 if(name==='aliases')loadAliases();
@@ -2237,7 +2237,6 @@ const errorLogsPageSize=30;
 async function loadStats(){
 const sRes=await fetch(API+'/stats');
 const stats=await sRes.json();
-await loadStatsLogs(statsCurrentPage);
 renderStatsOverview(stats);
 renderStatsByProvider(stats);
 renderStatsByModel(stats);
