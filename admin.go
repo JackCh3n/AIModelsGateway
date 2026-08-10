@@ -275,6 +275,26 @@ func registerAdminRoutes(mux *http.ServeMux) {
 		})
 	}))
 
+	// 错误日志
+	mux.HandleFunc("/admin/api/error-logs", corsHandler(func(w http.ResponseWriter, r *http.Request) {
+		page, _ := strconv.Atoi(r.URL.Query().Get("page"))
+		if page < 1 {
+			page = 1
+		}
+		pageSize, _ := strconv.Atoi(r.URL.Query().Get("pageSize"))
+		if pageSize <= 0 {
+			pageSize = 50
+		}
+		logs, total := getErrorLogs(page, pageSize)
+		writeJSON(w, http.StatusOK, map[string]any{
+			"logs":     logs,
+			"total":    total,
+			"page":     page,
+			"pageSize": pageSize,
+			"pages":    (total + pageSize - 1) / pageSize,
+		})
+	}))
+
 	// 清空日志
 	mux.HandleFunc("/admin/api/logs/clear", corsHandler(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != "POST" {

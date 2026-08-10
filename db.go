@@ -53,6 +53,21 @@ func initDB() {
 		_, _ = db.Exec("CREATE INDEX IF NOT EXISTS idx_logs_ts ON usage_logs(timestamp DESC)")
 		_, _ = db.Exec("CREATE INDEX IF NOT EXISTS idx_logs_provider ON usage_logs(provider_name)")
 		_, _ = db.Exec("CREATE INDEX IF NOT EXISTS idx_logs_model ON usage_logs(model)")
+		// 错误日志表
+		_, err = db.Exec(`CREATE TABLE IF NOT EXISTS error_logs (
+			id TEXT PRIMARY KEY,
+			timestamp DATETIME,
+			status_code INTEGER,
+			provider_id TEXT,
+			provider_name TEXT,
+			model TEXT,
+			route TEXT,
+			message TEXT
+		)`)
+		if err != nil {
+			log.Printf("sqlite create error_logs table error: %v", err)
+		}
+		_, _ = db.Exec("CREATE INDEX IF NOT EXISTS idx_errlogs_ts ON error_logs(timestamp DESC)")
 		// 启动定时清理（保留30天）
 		go cleanupOldLogs()
 	})
@@ -71,6 +86,47 @@ func dbAddUsageLog(entry UsageLog) {
 	if err != nil {
 		log.Printf("sqlite insert error: %v", err)
 	}
+}
+
+// dbAddErrorLog 写入一条错误日志
+func dbAddErrorLog(entry ErrorLog) {
+	initDB()
+	if db == nil {
+		return
+	}
+	_, err := db.Exec("INSERT OR IGNORE INTO error_logs(id,timestamp,status_code,provider_id,provider_name,model,route,message) VALUES(?,?,?,?,?,?,?,?)",
+		entry.ID, entry.Timestamp, entry.StatusCode, entry.ProviderID, entry.ProviderName, entry.Model, entry.Route, entry.Message,
+	)
+	if err != nil {
+		log.Printf("sqlite insert error_log error: %v", err)
+	}
+}
+
+// dbGetErrorLogs 分页查询错误日志（最新在前）
+func dbGetErrorLogs(page, pageSize int) ([]ErrorLog, int) {
+	initDB()
+	if db == nil {
+		return []ErrorLog{}, 0
+	}
+	var total int
+	_ = db.QueryRow("SELECT COUNT(*) FROM error_logs").Scan(&total)
+	off := (page - 1) * pageSize
+	rows, err := db.Query("SELECT id,timestamp,status_code,provider_id,provider_name,model,route,message FROM error_logs ORDER BY timestamp DESC LIMIT ? OFFSET ?", pageSize, off)
+	if err != nil {
+		return []ErrorLog{}, total
+	}
+	defer rows.Close()
+	var list []ErrorLog
+	for rows.Next() {
+		var e ErrorLog
+		if err := rows.Scan(&e.ID, &e.Timestamp, &e.StatusCode, &e.ProviderID, &e.ProviderName, &e.Model, &e.Route, &e.Message); err == nil {
+			list = append(list, e)
+		}
+	}
+	if list == nil {
+		list = []ErrorLog{}
+	}
+	return list, total
 }
 
 // dbBatchInsertUsageLogs 批量写入用量日志，减少事务开销提升吞吐
@@ -243,6 +299,10 @@ func cleanupOldLogs() {
 		_, err := db.Exec("DELETE FROM usage_logs WHERE timestamp < ?", cutoff)
 		if err != nil {
 			log.Printf("sqlite cleanup error: %v", err)
+		}
+		_, err = db.Exec("DELETE FROM error_logs WHERE timestamp < ?", cutoff)
+		if err != nil {
+			log.Printf("sqlite cleanup error_logs error: %v", err)
 		}
 	}
 }

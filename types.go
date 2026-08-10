@@ -63,6 +63,18 @@ type UsageLog struct {
 	ClientFormat string    `json:"clientFormat"` // openai 或 anthropic
 }
 
+// ErrorLog 上游请求错误记录（用于后台查看失败明细）
+type ErrorLog struct {
+	ID           string    `json:"id"`
+	Timestamp    time.Time `json:"timestamp"`
+	StatusCode   int       `json:"statusCode"`   // 上游返回的状态码
+	ProviderID   string    `json:"providerId"`
+	ProviderName string    `json:"providerName"`
+	Model        string    `json:"model"`
+	Route        string    `json:"route"` // 调用场景：normal / failover / alias
+	Message      string    `json:"message"` // 错误信息（截断）
+}
+
 // Settings 全局设置
 type Settings struct {
 	ActiveProviderID string   `json:"activeProviderId"`

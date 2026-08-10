@@ -45,6 +45,8 @@ tr:hover{background:var(--hover)}
 .badge-active{background:rgba(16,185,129,.15);color:var(--green)}
 .badge-disabled{background:rgba(239,68,68,.15);color:var(--red)}
 .badge-openai{background:rgba(59,130,246,.15);color:var(--blue)}
+.badge-warning{background:rgba(245,158,11,.15);color:#f59e0b}
+.badge-danger{background:rgba(239,68,68,.18);color:var(--red)}
 .badge-anthropic{background:rgba(239,68,68,.15);color:var(--red)}
 .badge-current{background:var(--accent);color:#fff}
 .btn{padding:8px 16px;border:none;border-radius:var(--radius);cursor:pointer;font-size:13px;font-weight:500;transition:.2s}
@@ -229,6 +231,11 @@ tr:hover{background:var(--hover)}
 <div class="card-title">最近请求日志 <button class="btn btn-sm btn-danger" style="float:right" onclick="clearLogs()">清空日志</button></div>
 <div id="recentLogs"></div>
 <div id="logPagination" style="display:flex;align-items:center;justify-content:center;gap:8px;margin-top:12px"></div>
+</div>
+<div class="card">
+<div class="card-title">错误日志</div>
+<div id="errorLogs"></div>
+<div id="errorLogPagination" style="display:flex;align-items:center;justify-content:center;gap:8px;margin-top:12px"></div>
 </div>
 </div>
 
@@ -2218,11 +2225,14 @@ toast('已复制到剪贴板','success');
 // --- Stats ---
 let statsCurrentPage=1;
 const statsPageSize=30;
+let errorLogsCurrentPage=1;
+const errorLogsPageSize=30;
 
 async function loadStats(){
 const sRes=await fetch(API+'/stats');
 const stats=await sRes.json();
 await loadStatsLogs(statsCurrentPage);
+await loadErrorLogs(errorLogsCurrentPage);
 renderStatsOverview(stats);
 renderStatsByProvider(stats);
 renderStatsByModel(stats);
@@ -2243,6 +2253,31 @@ lg+='</table>';
 document.getElementById('recentLogs').innerHTML=lg;
 // 分页
 renderLogPagination(data.page||1,data.pages||0,data.total||0);
+}
+
+async function loadErrorLogs(page){
+errorLogsCurrentPage=page;
+const lRes=await fetch(API+'/error-logs?page='+page+'&pageSize='+errorLogsPageSize);
+const data=await lRes.json();
+const logs=data.logs||[];
+let lg='<table><tr><th>时间</th><th>状态码</th><th>站点</th><th>模型</th><th>调用</th><th>错误信息</th></tr>';
+for(const l of logs){
+const codeCls=l.statusCode>=500?'badge badge-danger':(l.statusCode>=400?'badge badge-warning':'badge badge-openai');
+lg+='<tr><td>'+fmtDate(l.timestamp)+'</td><td><span class="'+codeCls+'">'+l.statusCode+'</span></td><td>'+esc(l.providerName)+'</td><td class="mono">'+esc(l.model)+'</td><td>'+esc(l.route)+'</td><td class="mono" style="font-size:11px;max-width:420px;word-break:break-all">'+esc(l.message)+'</td></tr>';
+}
+if(logs.length===0)lg+='<tr><td colspan="6" class="empty">暂无错误日志</td></tr>';
+lg+='</table>';
+document.getElementById('errorLogs').innerHTML=lg;
+// 分页
+renderErrorLogPagination(data.page||1,data.pages||0,data.total||0);
+}
+
+function renderErrorLogPagination(page,pages,total){
+let html='<span style="font-size:12px;color:var(--muted)">共 '+total+' 条</span>';
+html+='<button class="btn btn-sm btn-outline" '+(page<=1?'disabled':'')+' onclick="loadErrorLogs('+(page-1)+')">上一页</button>';
+html+='<span style="font-size:12px">'+page+' / '+(pages||1)+'</span>';
+html+='<button class="btn btn-sm btn-outline" '+(page>=pages?'disabled':'')+' onclick="loadErrorLogs('+(page+1)+')">下一页</button>';
+document.getElementById('errorLogPagination').innerHTML=html;
 }
 
 function renderStatsOverview(stats){

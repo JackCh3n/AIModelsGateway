@@ -759,6 +759,21 @@ func getRecentLogs(page, pageSize int) ([]UsageLog, int) {
 	return dbGetRecentLogs(page, pageSize)
 }
 
+// addErrorLog 记录一条上游错误日志（校验后写入）
+func addErrorLog(entry ErrorLog) {
+	if entry.StatusCode == 0 {
+		return
+	}
+	if len(entry.Message) > 500 {
+		entry.Message = entry.Message[:500]
+	}
+	dbAddErrorLog(entry)
+}
+
+func getErrorLogs(page, pageSize int) ([]ErrorLog, int) {
+	return dbGetErrorLogs(page, pageSize)
+}
+
 func clearLogs() {
 	dbClearLogs()
 	redisClearStats()
