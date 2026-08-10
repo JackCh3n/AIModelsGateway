@@ -2246,11 +2246,19 @@ renderLogPagination(data.page||1,data.pages||0,data.total||0);
 }
 
 function renderStatsOverview(stats){
+// 今日统计（按日期聚合，key 为 YYYY-MM-DD）
+const today=new Date();
+const todayKey=today.getFullYear()+'-'+String(today.getMonth()+1).padStart(2,'0')+'-'+String(today.getDate()).padStart(2,'0');
+const td=(stats.byDate||{})[todayKey]||{};
 document.getElementById('statsGrid').innerHTML=
 statCard(stats.totalReqs||0,'总请求数')+
 statCard((stats.totalInput||0).toLocaleString(),'输入 Token')+
 statCard((stats.totalOutput||0).toLocaleString(),'输出 Token')+
-statCard((stats.totalTokens||0).toLocaleString(),'Token 总量');
+statCard((stats.totalTokens||0).toLocaleString(),'Token 总量')+
+statCard(td.count||0,'今日请求数')+
+statCard((td.input||0).toLocaleString(),'今日输入 Token')+
+statCard((td.output||0).toLocaleString(),'今日输出 Token')+
+statCard((td.total||0).toLocaleString(),'今日 Token 总量');
 }
 
 function renderStatsByProvider(stats){
