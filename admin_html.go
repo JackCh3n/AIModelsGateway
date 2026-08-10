@@ -70,7 +70,7 @@ tr:hover{background:var(--hover)}
 .modal{background:var(--card);border:1px solid var(--border);border-radius:var(--radius);padding:24px;width:640px;max-width:95vw;max-height:88vh;overflow-y:auto;box-shadow:0 10px 40px rgba(0,0,0,.2)}
 .modal-title{font-size:18px;font-weight:600;margin-bottom:20px}
 .modal-actions{display:flex;gap:8px;justify-content:flex-end;margin-top:20px}
-.stats-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:16px;margin-bottom:20px}
+.stats-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:16px;margin-bottom:20px}
 .stat-card{background:var(--card);border:1px solid var(--border);border-radius:var(--radius);padding:20px;text-align:center;box-shadow:var(--shadow)}
 .stat-value{font-size:28px;font-weight:700;color:var(--accent)}
 .stat-label{font-size:13px;color:var(--muted);margin-top:4px}
@@ -142,6 +142,7 @@ tr:hover{background:var(--hover)}
 <button class="tab" onclick="switchTab(event,'aliases')">模型路由</button>
 <button class="tab" onclick="switchTab(event,'keys')">API Keys</button>
 <button class="tab" onclick="switchTab(event,'stats')">用量统计</button>
+<button class="tab" onclick="switchTab(event,'errorlogs')">错误日志</button>
 <button class="tab" onclick="switchTab(event,'chat')">聊天测试</button>
 <button class="tab" onclick="switchTab(event,'settings')">设置</button>
 <button class="tab" onclick="switchTab(event,'config')">接入配置</button>
@@ -232,6 +233,10 @@ tr:hover{background:var(--hover)}
 <div id="recentLogs"></div>
 <div id="logPagination" style="display:flex;align-items:center;justify-content:center;gap:8px;margin-top:12px"></div>
 </div>
+</div>
+
+<!-- 错误日志 -->
+<div class="panel" id="panel-errorlogs">
 <div class="card">
 <div class="card-title">错误日志</div>
 <div id="errorLogs"></div>
@@ -645,6 +650,7 @@ document.querySelectorAll('.panel').forEach(p=>p.classList.remove('active'));
 e.target.classList.add('active');
 document.getElementById('panel-'+name).classList.add('active');
 if(name==='stats')loadStats();
+if(name==='errorlogs')loadErrorLogs(errorLogsCurrentPage);
 if(name==='config')loadConfig();
 if(name==='settings')loadSettings();
 if(name==='aliases')loadAliases();
@@ -2232,7 +2238,6 @@ async function loadStats(){
 const sRes=await fetch(API+'/stats');
 const stats=await sRes.json();
 await loadStatsLogs(statsCurrentPage);
-await loadErrorLogs(errorLogsCurrentPage);
 renderStatsOverview(stats);
 renderStatsByProvider(stats);
 renderStatsByModel(stats);
