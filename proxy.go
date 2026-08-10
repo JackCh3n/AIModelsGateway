@@ -264,8 +264,6 @@ func forwardToProvider(w http.ResponseWriter, r *http.Request, clientFormat stri
 	var resp *http.Response
 	var lastStatus int
 	var lastBody []byte
-	// 上下文超长降级重试标志：仅触发一次，避免无限裁剪
-	contextTrimmed := false
 
 	for attempt := 0; attempt <= maxRetries; attempt++ {
 		// 每次重试重新构建请求（body 为 bytes.Reader 需重建）
@@ -350,39 +348,6 @@ func forwardToProvider(w http.ResponseWriter, r *http.Request, clientFormat stri
 			Route:        "proxy",
 			Message:      truncate(string(lastBody), 500),
 		})
-
-		// 上下文超长降级重试：检测到错误信息包含上下文超长提示时，
-		// 裁剪 messages 历史后重新发送一次，避免客户端传回过长上下文导致 400。
-		if !contextTrimmed && isContextLengthError(lastBody) {
-			if trimmed, ok := trimMessagesForContext(params); ok {
-				contextTrimmed = true
-				newRaw, _ := json.Marshal(params)
-				log.Printf("  [%s] 检测到上下文超长，裁剪 messages 后重试 (新消息数=%d)", provider.Name, trimmed)
-				// 同步到上游请求体：若发生过格式转换则重新转换，否则直接使用
-				if needConvert {
-					if clientFormat == "anthropic" && provider.Format == "openai" {
-						if conv, err := anthropicToOpenAIReq(newRaw); err == nil {
-							upstreamBody, _ = json.Marshal(conv)
-						}
-					} else if clientFormat == "openai" && provider.Format == "anthropic" {
-						if conv, err := openAIToAnthropicReq(newRaw); err == nil {
-							upstreamBody, _ = json.Marshal(conv)
-						}
-					}
-				} else {
-					upstreamBody = newRaw
-				}
-				// 需重新注入 reasoning_content（裁剪后消息可能变化）
-				if provider.Format == "openai" {
-					if nb, n := injectReasoningIntoRequestBody(upstreamBody); n > 0 {
-						upstreamBody = nb
-					}
-				}
-				// 降级重试不计入普通重试次数，直接重新走循环
-				attempt--
-				continue
-			}
-		}
 
 		// 不可重试错误，或重试次数耗尽：
 		// 返回 handled=false 让主备路由顺延到下一个站点
@@ -991,62 +956,6 @@ func truncate(s string, n int) string {
 		return s
 	}
 	return s[:n] + "..."
-}
-
-// isContextLengthError 判断上游错误是否为上下文超长（messages 或 completion 过长）
-func isContextLengthError(body []byte) bool {
-	s := strings.ToLower(string(body))
-	for _, kw := range []string{
-		"exceeds the maximum length",
-		"maximum context length",
-		"reduce the length of the messages",
-		"context_length_exceeded",
-		"prompt is too long",
-		"maximum context",
-		"context length",
-	} {
-		if strings.Contains(s, kw) {
-			return true
-		}
-	}
-	return false
-}
-
-// trimMessagesForContext 裁剪 params 中的 messages，减少上下文长度。
-// 策略：保留 system 消息和最近 N 条消息，丢弃中间的历史轮次。
-// 返回裁剪后的消息数（成功时）。
-func trimMessagesForContext(params map[string]any) (int, bool) {
-	msgs, ok := params["messages"].([]any)
-	if !ok || len(msgs) <= 4 {
-		return 0, false
-	}
-	// 保留前 1 条（通常是 system）和最近 3 条（最近的对话轮次）
-	var kept []any
-	// system 优先保留
-	for _, m := range msgs {
-		if mm, ok := m.(map[string]any); ok {
-			if role, _ := mm["role"].(string); role == "system" {
-				kept = append(kept, m)
-			}
-		}
-	}
-	// 追加最近 3 条非 system 消息（可能包含 system，但保持顺序）
-	nonSystem := 0
-	for i := len(msgs) - 1; i >= 0 && nonSystem < 3; i-- {
-		m := msgs[i]
-		if mm, ok := m.(map[string]any); ok {
-			if role, _ := mm["role"].(string); role == "system" {
-				continue
-			}
-		}
-		kept = append(kept, m)
-		nonSystem++
-	}
-	if len(kept) >= len(msgs) {
-		return 0, false
-	}
-	params["messages"] = kept
-	return len(kept), true
 }
 
 func writeJSON(w http.ResponseWriter, status int, data any) {
