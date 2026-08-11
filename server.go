@@ -208,6 +208,7 @@ func startServer(port int) error {
 		<-quit
 		log.Printf("收到关闭信号，正在优雅关闭...")
 		flushUsageLogs()
+		flushErrorLogs()
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 		if err := server.Shutdown(ctx); err != nil {

@@ -102,6 +102,35 @@ func dbAddErrorLog(entry ErrorLog) {
 	}
 }
 
+// dbBatchInsertErrorLogs 批量写入错误日志，减少事务开销
+func dbBatchInsertErrorLogs(entries []ErrorLog) {
+	initDB()
+	if db == nil || len(entries) == 0 {
+		return
+	}
+	tx, err := db.Begin()
+	if err != nil {
+		log.Printf("sqlite batch error_logs begin tx error: %v", err)
+		for _, e := range entries {
+			dbAddErrorLog(e)
+		}
+		return
+	}
+	stmt, err := tx.Prepare("INSERT OR IGNORE INTO error_logs(id,timestamp,status_code,provider_id,provider_name,model,route,message) VALUES(?,?,?,?,?,?,?,?)")
+	if err != nil {
+		tx.Rollback()
+		log.Printf("sqlite batch error_logs prepare error: %v", err)
+		return
+	}
+	defer stmt.Close()
+	for _, e := range entries {
+		_, _ = stmt.Exec(e.ID, e.Timestamp, e.StatusCode, e.ProviderID, e.ProviderName, e.Model, e.Route, e.Message)
+	}
+	if err := tx.Commit(); err != nil {
+		log.Printf("sqlite batch error_logs commit error: %v", err)
+	}
+}
+
 // dbGetErrorLogs 分页查询错误日志（最新在前）
 func dbGetErrorLogs(page, pageSize int) ([]ErrorLog, int) {
 	initDB()

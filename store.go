@@ -679,8 +679,37 @@ func getFailoverByName(model string) *FailoverRoute {
 // 狂暴模式下 buffer 加大到 20000，避免高并发满溢降级为同步写拖慢请求
 var usageLogCh = make(chan UsageLog, 20000)
 
+// errorLogCh 错误日志异步写入 channel，避免请求路径同步写库拖慢
+var errorLogCh = make(chan ErrorLog, 10000)
+
 func init() {
 	go usageLogWorker()
+	go errorLogWorker()
+}
+
+// errorLogWorker 后台批量写入错误日志，每 1 秒或满 500 条刷一次
+func errorLogWorker() {
+	ticker := time.NewTicker(1 * time.Second)
+	defer ticker.Stop()
+	batch := make([]ErrorLog, 0, 500)
+	flush := func() {
+		if len(batch) == 0 {
+			return
+		}
+		dbBatchInsertErrorLogs(batch)
+		batch = batch[:0]
+	}
+	for {
+		select {
+		case entry := <-errorLogCh:
+			batch = append(batch, entry)
+			if len(batch) >= 500 {
+				flush()
+			}
+		case <-ticker.C:
+			flush()
+		}
+	}
 }
 
 // usageLogWorker 后台批量写入 SQLite，每 1 秒或满 500 条刷一次
@@ -745,6 +774,26 @@ func flushUsageLogs() {
 	}
 }
 
+// flushErrorLogs 刷盘待写入的错误日志（用于优雅关闭时调用）
+func flushErrorLogs() {
+	batch := make([]ErrorLog, 0, 500)
+	for {
+		select {
+		case entry := <-errorLogCh:
+			batch = append(batch, entry)
+			if len(batch) >= 500 {
+				dbBatchInsertErrorLogs(batch)
+				batch = batch[:0]
+			}
+		default:
+			if len(batch) > 0 {
+				dbBatchInsertErrorLogs(batch)
+			}
+			return
+		}
+	}
+}
+
 func getUsageStats() map[string]any {
 	// 狂暴模式：优先从 Redis 读取（内存级延迟）
 	if redisEnabled {
@@ -767,7 +816,12 @@ func addErrorLog(entry ErrorLog) {
 	if len(entry.Message) > 500 {
 		entry.Message = entry.Message[:500]
 	}
-	dbAddErrorLog(entry)
+	// 异步写入，不阻塞请求路径；channel 满时降级为同步写
+	select {
+	case errorLogCh <- entry:
+	default:
+		dbAddErrorLog(entry)
+	}
 }
 
 func getErrorLogs(page, pageSize int) ([]ErrorLog, int) {

@@ -298,6 +298,17 @@ func forwardToProvider(w http.ResponseWriter, r *http.Request, clientFormat stri
 		resp, err = getHTTPClient(provider).Do(req)
 		if err != nil {
 			log.Printf("  [%s] upstream network error: %v", provider.Name, err)
+			// 记录网络错误日志
+			addErrorLog(ErrorLog{
+				ID:           generateID("err"),
+				Timestamp:    time.Now(),
+				StatusCode:   http.StatusBadGateway,
+				ProviderID:   provider.ID,
+				ProviderName: provider.Name,
+				Model:        model,
+				Route:        "proxy",
+				Message:      truncate(err.Error(), 500),
+			})
 			if attempt < maxRetries {
 				delay := time.Duration(attempt+1) * time.Second
 				log.Printf("  [%s] upstream network error, retry %d/%d after %v",
@@ -354,7 +365,10 @@ func forwardToProvider(w http.ResponseWriter, r *http.Request, clientFormat stri
 		log.Printf("  [%s] upstream %d: %s", provider.Name, lastStatus, truncate(string(lastBody), 500))
 		return false
 	}
-	defer resp.Body.Close()
+	// 仅在成功获得响应体后才关闭，避免网络错误时 resp 为 nil 触发 panic
+	if resp != nil {
+		defer resp.Body.Close()
+	}
 
 	if isStream {
 		handleStreamProxy(w, resp, clientFormat, provider.Format, provider, model)
