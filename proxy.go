@@ -268,119 +268,136 @@ func forwardToProvider(w http.ResponseWriter, r *http.Request, clientFormat stri
 	var lastBody []byte
 
 	for attempt := 0; attempt <= maxRetries; attempt++ {
-		// 每次重试重新构建请求（body 为 bytes.Reader 需重建）
-		req, err := http.NewRequest("POST", upstreamURL, bytes.NewReader(upstreamBody))
-		if err != nil {
-			writeError(w, clientFormat, http.StatusInternalServerError, "create request: "+err.Error())
-			return true
-		}
-		// 绑定客户端 Context：客户端断开时自动取消上游请求，避免资源泄漏。
-		// 主备路由场景下若配置了单节点超时，叠加超时控制：超时（含等待响应头）
-		// 则中断请求并顺延下一站点/模型。流式请求同样应用该超时。
-		reqCtx := r.Context()
-		if timeout > 0 {
-			var cancel context.CancelFunc
-			reqCtx, cancel = context.WithTimeout(reqCtx, timeout)
-			defer cancel()
-		}
-		req = req.WithContext(reqCtx)
+		// 每次迭代用闭包隔离 context 生命周期：defer 在闭包返回时执行，
+		// 确保超时 context 被取消；成功拿到响应头时已显式 cancel，defer 为空操作。
+		// 返回值: 0=成功 1=重试 2=顺延(return false) 3=已写错误(return true)
+		action := func() int {
+			req, err := http.NewRequest("POST", upstreamURL, bytes.NewReader(upstreamBody))
+			if err != nil {
+				writeError(w, clientFormat, http.StatusInternalServerError, "create request: "+err.Error())
+				return 3
+			}
+			// 绑定客户端 Context：客户端断开时自动取消上游请求，避免资源泄漏。
+			// 主备路由场景下若配置了单节点超时，对等待响应头阶段叠加超时控制：
+			// 超时则中断并顺延下一站点/模型。
+			// 流式请求拿到响应头开始传输后不得再受超时限制，否则长流式传输会被超时误杀，
+			// 因此成功拿到响应头后需显式取消超时（defer 此时为空操作）。
+			reqCtx := r.Context()
+			var cancelHeader context.CancelFunc
+			if timeout > 0 {
+				reqCtx, cancelHeader = context.WithTimeout(reqCtx, timeout)
+			}
+			defer func() {
+				if cancelHeader != nil {
+					cancelHeader()
+				}
+			}()
+			req = req.WithContext(reqCtx)
 
-		// 设置请求头
-		req.Header.Set("Content-Type", "application/json")
-		if provider.Format == "anthropic" {
-			req.Header.Set("x-api-key", apiKey)
-			req.Header.Set("anthropic-version", "2023-06-01")
-		} else {
-			req.Header.Set("Authorization", "Bearer "+apiKey)
-		}
+			// 设置请求头
+			req.Header.Set("Content-Type", "application/json")
+			if provider.Format == "anthropic" {
+				req.Header.Set("x-api-key", apiKey)
+				req.Header.Set("anthropic-version", "2023-06-01")
+			} else {
+				req.Header.Set("Authorization", "Bearer "+apiKey)
+			}
+			for k, v := range provider.CustomHeaders {
+				req.Header.Set(k, v)
+			}
+			if ua := getSettings().UserAgent; ua != "" && req.Header.Get("User-Agent") == "" {
+				req.Header.Set("User-Agent", ua)
+			}
 
-		// 应用自定义请求头（覆盖同名默认头）
-		for k, v := range provider.CustomHeaders {
-			req.Header.Set(k, v)
-		}
+			resp, err = getHTTPClient(provider).Do(req)
+			if err != nil {
+				log.Printf("  [%s] upstream network error: %v", provider.Name, err)
+				addErrorLog(ErrorLog{
+					ID:           generateID("err"),
+					Timestamp:    time.Now(),
+					StatusCode:   http.StatusBadGateway,
+					ProviderID:   provider.ID,
+					ProviderName: provider.Name,
+					Model:        model,
+					Route:        "proxy",
+					Message:      truncate(err.Error(), 500),
+					APIKey:       apiKey,
+				})
+				// 单节点超时（context deadline exceeded）不再重试，直接返回 false 让主备路由顺延
+				if timeout > 0 && (errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled)) {
+					log.Printf("  [%s] 单节点请求超时，顺延下一个站点/模型", provider.Name)
+					return 2
+				}
+				if attempt < maxRetries {
+					delay := time.Duration(attempt+1) * time.Second
+					log.Printf("  [%s] upstream network error, retry %d/%d after %v",
+						provider.Name, attempt+1, maxRetries, delay)
+					select {
+					case <-time.After(delay):
+					case <-r.Context().Done():
+						return 3 // 客户端已断开，放弃重试
+					}
+					return 1
+				}
+				return 2 // 重试耗尽，顺延
+			}
 
-		// 全局自定义 User-Agent：覆盖 Go 默认的 go-http-client/1.1
-		// 仅当站点未单独配置 User-Agent 时生效
-		if ua := getSettings().UserAgent; ua != "" && req.Header.Get("User-Agent") == "" {
-			req.Header.Set("User-Agent", ua)
-		}
+			if resp.StatusCode == http.StatusOK {
+				// 成功拿到响应头：显式取消超时，流式传输不再受超时约束
+				if cancelHeader != nil {
+					cancelHeader()
+				}
+				return 0
+			}
 
-		resp, err = getHTTPClient(provider).Do(req)
-		if err != nil {
-			log.Printf("  [%s] upstream network error: %v", provider.Name, err)
-			// 记录网络错误日志
+			// 读响应体，判断是否可重试
+			lastBody, _ = io.ReadAll(resp.Body)
+			resp.Body.Close()
+			lastStatus = resp.StatusCode
+
+			// 仅上游繁忙(503)或限流(429)时重试；其余错误直接返回
+			if resp.StatusCode == http.StatusServiceUnavailable || resp.StatusCode == http.StatusTooManyRequests {
+				if attempt < maxRetries {
+					delay := time.Duration(attempt+1) * time.Second
+					log.Printf("  [%s] upstream %d (SERVICE_BUSY), retry %d/%d after %v: %s",
+						provider.Name, resp.StatusCode, attempt+1, maxRetries, delay, truncate(string(lastBody), 200))
+					select {
+					case <-time.After(delay):
+					case <-r.Context().Done():
+						return 3 // 客户端已断开，放弃重试
+					}
+					return 1
+				}
+			}
+
+			// 记录错误日志（时间/状态码/站点/模型）
 			addErrorLog(ErrorLog{
 				ID:           generateID("err"),
 				Timestamp:    time.Now(),
-				StatusCode:   http.StatusBadGateway,
+				StatusCode:   resp.StatusCode,
 				ProviderID:   provider.ID,
 				ProviderName: provider.Name,
 				Model:        model,
 				Route:        "proxy",
-				Message:      truncate(err.Error(), 500),
+				Message:      truncate(string(lastBody), 500),
 				APIKey:       apiKey,
 			})
-			// 单节点超时（context deadline exceeded）不再重试，直接返回 false 让主备路由顺延
-			if timeout > 0 && (errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled)) {
-				log.Printf("  [%s] 单节点请求超时，顺延下一个站点/模型", provider.Name)
-				return false
-			}
-			if attempt < maxRetries {
-				delay := time.Duration(attempt+1) * time.Second
-				log.Printf("  [%s] upstream network error, retry %d/%d after %v",
-					provider.Name, attempt+1, maxRetries, delay)
-				select {
-				case <-time.After(delay):
-				case <-r.Context().Done():
-					return true // 客户端已断开，放弃重试
-				}
-				continue
-			}
-			// 重试耗尽：返回 false（不写错误），让主备路由顺延到下一个站点
+
+			log.Printf("  [%s] upstream %d: %s", provider.Name, lastStatus, truncate(string(lastBody), 500))
+			return 2
+		}()
+
+		switch action {
+		case 0:
+			break // 成功，跳出循环进入响应处理
+		case 1:
+			continue
+		case 2:
 			return false
+		case 3:
+			return true
 		}
-
-		if resp.StatusCode == http.StatusOK {
-			break // 成功，进入后续处理
-		}
-
-		// 读响应体，判断是否可重试
-		lastBody, _ = io.ReadAll(resp.Body)
-		resp.Body.Close()
-		lastStatus = resp.StatusCode
-
-		// 仅上游繁忙(503)或限流(429)时重试；其余错误直接返回
-		if resp.StatusCode == http.StatusServiceUnavailable || resp.StatusCode == http.StatusTooManyRequests {
-			if attempt < maxRetries {
-				delay := time.Duration(attempt+1) * time.Second
-				log.Printf("  [%s] upstream %d (SERVICE_BUSY), retry %d/%d after %v: %s",
-					provider.Name, resp.StatusCode, attempt+1, maxRetries, delay, truncate(string(lastBody), 200))
-				select {
-				case <-time.After(delay):
-				case <-r.Context().Done():
-					return true // 客户端已断开，放弃重试
-				}
-				continue
-			}
-		}
-
-		// 记录错误日志（时间/状态码/站点/模型）
-		addErrorLog(ErrorLog{
-			ID:           generateID("err"),
-			Timestamp:    time.Now(),
-			StatusCode:   resp.StatusCode,
-			ProviderID:   provider.ID,
-			ProviderName: provider.Name,
-			Model:        model,
-			Route:        "proxy",
-			Message:      truncate(string(lastBody), 500),
-			APIKey:       apiKey,
-		})
-
-		// 不可重试错误，或重试次数耗尽：
-		// 返回 handled=false 让主备路由顺延到下一个站点
-		log.Printf("  [%s] upstream %d: %s", provider.Name, lastStatus, truncate(string(lastBody), 500))
-		return false
+		break
 	}
 	// 仅在成功获得响应体后才关闭，避免网络错误时 resp 为 nil 触发 panic
 	if resp != nil {
