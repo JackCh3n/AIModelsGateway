@@ -275,10 +275,10 @@ func forwardToProvider(w http.ResponseWriter, r *http.Request, clientFormat stri
 			return true
 		}
 		// 绑定客户端 Context：客户端断开时自动取消上游请求，避免资源泄漏。
-		// 主备路由非流式场景下若配置了单节点超时，叠加超时控制以便超时后顺延下一站点。
-		// 流式请求不叠加超时（流式时长不可预测，超时会误伤长输出）。
+		// 主备路由场景下若配置了单节点超时，叠加超时控制：超时（含等待响应头）
+		// 则中断请求并顺延下一站点/模型。流式请求同样应用该超时。
 		reqCtx := r.Context()
-		if timeout > 0 && !isStream {
+		if timeout > 0 {
 			var cancel context.CancelFunc
 			reqCtx, cancel = context.WithTimeout(reqCtx, timeout)
 			defer cancel()
