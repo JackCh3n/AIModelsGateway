@@ -308,6 +308,7 @@ func forwardToProvider(w http.ResponseWriter, r *http.Request, clientFormat stri
 				Model:        model,
 				Route:        "proxy",
 				Message:      truncate(err.Error(), 500),
+				APIKey:       apiKey,
 			})
 			if attempt < maxRetries {
 				delay := time.Duration(attempt+1) * time.Second
@@ -358,6 +359,7 @@ func forwardToProvider(w http.ResponseWriter, r *http.Request, clientFormat stri
 			Model:        model,
 			Route:        "proxy",
 			Message:      truncate(string(lastBody), 500),
+			APIKey:       apiKey,
 		})
 
 		// 不可重试错误，或重试次数耗尽：

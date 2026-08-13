@@ -62,11 +62,14 @@ func initDB() {
 			provider_name TEXT,
 			model TEXT,
 			route TEXT,
-			message TEXT
+			message TEXT,
+			api_key TEXT
 		)`)
 		if err != nil {
 			log.Printf("sqlite create error_logs table error: %v", err)
 		}
+		// 兼容旧表：若缺少 api_key 列则补充
+		_, _ = db.Exec("ALTER TABLE error_logs ADD COLUMN api_key TEXT")
 		_, _ = db.Exec("CREATE INDEX IF NOT EXISTS idx_errlogs_ts ON error_logs(timestamp DESC)")
 		// 启动定时清理（保留30天）
 		go cleanupOldLogs()
@@ -94,8 +97,8 @@ func dbAddErrorLog(entry ErrorLog) {
 	if db == nil {
 		return
 	}
-	_, err := db.Exec("INSERT OR IGNORE INTO error_logs(id,timestamp,status_code,provider_id,provider_name,model,route,message) VALUES(?,?,?,?,?,?,?,?)",
-		entry.ID, entry.Timestamp, entry.StatusCode, entry.ProviderID, entry.ProviderName, entry.Model, entry.Route, entry.Message,
+	_, err := db.Exec("INSERT OR IGNORE INTO error_logs(id,timestamp,status_code,provider_id,provider_name,model,route,message,api_key) VALUES(?,?,?,?,?,?,?,?,?)",
+		entry.ID, entry.Timestamp, entry.StatusCode, entry.ProviderID, entry.ProviderName, entry.Model, entry.Route, entry.Message, entry.APIKey,
 	)
 	if err != nil {
 		log.Printf("sqlite insert error_log error: %v", err)
@@ -116,7 +119,7 @@ func dbBatchInsertErrorLogs(entries []ErrorLog) {
 		}
 		return
 	}
-	stmt, err := tx.Prepare("INSERT OR IGNORE INTO error_logs(id,timestamp,status_code,provider_id,provider_name,model,route,message) VALUES(?,?,?,?,?,?,?,?)")
+	stmt, err := tx.Prepare("INSERT OR IGNORE INTO error_logs(id,timestamp,status_code,provider_id,provider_name,model,route,message,api_key) VALUES(?,?,?,?,?,?,?,?,?)")
 	if err != nil {
 		tx.Rollback()
 		log.Printf("sqlite batch error_logs prepare error: %v", err)
@@ -124,7 +127,7 @@ func dbBatchInsertErrorLogs(entries []ErrorLog) {
 	}
 	defer stmt.Close()
 	for _, e := range entries {
-		_, _ = stmt.Exec(e.ID, e.Timestamp, e.StatusCode, e.ProviderID, e.ProviderName, e.Model, e.Route, e.Message)
+		_, _ = stmt.Exec(e.ID, e.Timestamp, e.StatusCode, e.ProviderID, e.ProviderName, e.Model, e.Route, e.Message, e.APIKey)
 	}
 	if err := tx.Commit(); err != nil {
 		log.Printf("sqlite batch error_logs commit error: %v", err)
@@ -140,7 +143,7 @@ func dbGetErrorLogs(page, pageSize int) ([]ErrorLog, int) {
 	var total int
 	_ = db.QueryRow("SELECT COUNT(*) FROM error_logs").Scan(&total)
 	off := (page - 1) * pageSize
-	rows, err := db.Query("SELECT id,timestamp,status_code,provider_id,provider_name,model,route,message FROM error_logs ORDER BY timestamp DESC LIMIT ? OFFSET ?", pageSize, off)
+	rows, err := db.Query("SELECT id,timestamp,status_code,provider_id,provider_name,model,route,message,api_key FROM error_logs ORDER BY timestamp DESC LIMIT ? OFFSET ?", pageSize, off)
 	if err != nil {
 		return []ErrorLog{}, total
 	}
@@ -148,7 +151,7 @@ func dbGetErrorLogs(page, pageSize int) ([]ErrorLog, int) {
 	var list []ErrorLog
 	for rows.Next() {
 		var e ErrorLog
-		if err := rows.Scan(&e.ID, &e.Timestamp, &e.StatusCode, &e.ProviderID, &e.ProviderName, &e.Model, &e.Route, &e.Message); err == nil {
+		if err := rows.Scan(&e.ID, &e.Timestamp, &e.StatusCode, &e.ProviderID, &e.ProviderName, &e.Model, &e.Route, &e.Message, &e.APIKey); err == nil {
 			list = append(list, e)
 		}
 	}

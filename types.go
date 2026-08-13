@@ -73,6 +73,7 @@ type ErrorLog struct {
 	Model        string    `json:"model"`
 	Route        string    `json:"route"` // 调用场景：normal / failover / alias
 	Message      string    `json:"message"` // 错误信息（截断）
+	APIKey       string    `json:"apiKey"` // 请求时使用的上游 API Key
 }
 
 // Settings 全局设置

@@ -47,6 +47,9 @@ tr:hover{background:var(--hover)}
 .badge-openai{background:rgba(59,130,246,.15);color:var(--blue)}
 .badge-warning{background:rgba(245,158,11,.15);color:#f59e0b}
 .badge-danger{background:rgba(239,68,68,.18);color:var(--red)}
+.errkey{cursor:pointer;color:var(--muted);letter-spacing:1px;user-select:none}
+.errkey:hover{color:var(--accent)}
+.errkey-full{font-family:'Courier New',monospace;font-size:11px;word-break:break-all;color:var(--muted);cursor:pointer}
 .badge-anthropic{background:rgba(239,68,68,.15);color:var(--red)}
 .badge-current{background:var(--accent);color:#fff}
 .btn{padding:8px 16px;border:none;border-radius:var(--radius);cursor:pointer;font-size:13px;font-weight:500;transition:.2s}
@@ -2264,16 +2267,28 @@ errorLogsCurrentPage=page;
 const lRes=await fetch(API+'/error-logs?page='+page+'&pageSize='+errorLogsPageSize);
 const data=await lRes.json();
 const logs=data.logs||[];
-let lg='<table><tr><th>时间</th><th>状态码</th><th>站点</th><th>模型</th><th>调用</th><th>错误信息</th></tr>';
+let lg='<table><tr><th>时间</th><th>状态码</th><th>站点</th><th>模型</th><th>调用</th><th>API Key</th><th>错误信息</th></tr>';
 for(const l of logs){
 const codeCls=l.statusCode>=500?'badge badge-danger':(l.statusCode>=400?'badge badge-warning':'badge badge-openai');
-lg+='<tr><td>'+fmtDate(l.timestamp)+'</td><td><span class="'+codeCls+'">'+l.statusCode+'</span></td><td>'+esc(l.providerName)+'</td><td class="mono">'+esc(l.model)+'</td><td>'+esc(l.route)+'</td><td class="mono" style="font-size:11px;max-width:420px;word-break:break-all">'+esc(l.message)+'</td></tr>';
+lg+='<tr><td>'+fmtDate(l.timestamp)+'</td><td><span class="'+codeCls+'">'+l.statusCode+'</span></td><td>'+esc(l.providerName)+'</td><td class="mono">'+esc(l.model)+'</td><td>'+esc(l.route)+'</td><td><span class="errkey" onclick="toggleErrKey(this)">••••••••</span><span class="errkey-full" style="display:none">'+esc(l.apiKey||'')+'</span></td><td class="mono" style="font-size:11px;max-width:380px;word-break:break-all">'+esc(l.message)+'</td></tr>';
 }
-if(logs.length===0)lg+='<tr><td colspan="6" class="empty">暂无错误日志</td></tr>';
+if(logs.length===0)lg+='<tr><td colspan="7" class="empty">暂无错误日志</td></tr>';
 lg+='</table>';
 document.getElementById('errorLogs').innerHTML=lg;
 // 分页
 renderErrorLogPagination(data.page||1,data.pages||0,data.total||0);
+}
+
+// toggleErrKey 点击 API Key 时在隐藏/显示之间切换
+function toggleErrKey(el){
+const full=el.parentElement.querySelector('.errkey-full');
+if(full.style.display==='none'){
+full.style.display='inline';
+el.style.display='none';
+}else{
+full.style.display='none';
+el.style.display='inline';
+}
 }
 
 function renderErrorLogPagination(page,pages,total){
