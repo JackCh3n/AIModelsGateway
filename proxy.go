@@ -3,7 +3,9 @@ package main
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -160,7 +162,7 @@ func proxyRequest(w http.ResponseWriter, r *http.Request, clientFormat string, p
 	}
 
 	// 转发到单个站点（普通模式：默认活跃站点或指定站点），重试 3 次（延迟 1/2/3s）
-	handled := forwardToProvider(w, r, clientFormat, provider, model, body, params, isStream, 3)
+	handled := forwardToProvider(w, r, clientFormat, provider, model, body, params, isStream, 3, 0)
 	// 单站点模式无法顺延，若 forwardToProvider 返回 false（如网络错误重试耗尽），需写错误给客户端
 	if !handled {
 		writeError(w, clientFormat, http.StatusBadGateway, "upstream request failed")
@@ -170,7 +172,7 @@ func proxyRequest(w http.ResponseWriter, r *http.Request, clientFormat string, p
 // forwardToProvider 转发请求到单个站点（含格式转换、重试、响应处理）。
 // 返回 handled=false 表示该站点调用失败且错误未写入响应（可顺延到备用站点）；
 // handled=true 表示响应已写入（成功或已返回错误给客户端）。
-func forwardToProvider(w http.ResponseWriter, r *http.Request, clientFormat string, provider *Provider, model string, body []byte, params map[string]any, isStream bool, maxRetries int) (handled bool) {
+func forwardToProvider(w http.ResponseWriter, r *http.Request, clientFormat string, provider *Provider, model string, body []byte, params map[string]any, isStream bool, maxRetries int, timeout time.Duration) (handled bool) {
 	// 模型为空或 "all" 时，使用站点的默认模型
 	if model == "" || model == "all" {
 		if provider.DefaultModel != "" {
@@ -272,8 +274,16 @@ func forwardToProvider(w http.ResponseWriter, r *http.Request, clientFormat stri
 			writeError(w, clientFormat, http.StatusInternalServerError, "create request: "+err.Error())
 			return true
 		}
-		// 绑定客户端 Context：客户端断开时自动取消上游请求，避免资源泄漏
-		req = req.WithContext(r.Context())
+		// 绑定客户端 Context：客户端断开时自动取消上游请求，避免资源泄漏。
+		// 主备路由非流式场景下若配置了单节点超时，叠加超时控制以便超时后顺延下一站点。
+		// 流式请求不叠加超时（流式时长不可预测，超时会误伤长输出）。
+		reqCtx := r.Context()
+		if timeout > 0 && !isStream {
+			var cancel context.CancelFunc
+			reqCtx, cancel = context.WithTimeout(reqCtx, timeout)
+			defer cancel()
+		}
+		req = req.WithContext(reqCtx)
 
 		// 设置请求头
 		req.Header.Set("Content-Type", "application/json")
@@ -310,6 +320,11 @@ func forwardToProvider(w http.ResponseWriter, r *http.Request, clientFormat stri
 				Message:      truncate(err.Error(), 500),
 				APIKey:       apiKey,
 			})
+			// 单节点超时（context deadline exceeded）不再重试，直接返回 false 让主备路由顺延
+			if timeout > 0 && (errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled)) {
+				log.Printf("  [%s] 单节点请求超时，顺延下一个站点/模型", provider.Name)
+				return false
+			}
 			if attempt < maxRetries {
 				delay := time.Duration(attempt+1) * time.Second
 				log.Printf("  [%s] upstream network error, retry %d/%d after %v",
@@ -394,7 +409,12 @@ func proxyFailoverRequest(w http.ResponseWriter, r *http.Request, clientFormat s
 
 	var lastErr string
 	total := len(fo.Entries)
-	log.Printf("[failover] %s: 开始主备路由，共 %d/%d 个站点", fo.Name, total, maxFailoverEntries)
+	// 单节点请求超时（秒），默认 60；超时无响应则顺延下一个站点/模型
+	failoverTimeout := time.Duration(getSettings().FailoverTimeout) * time.Second
+	if failoverTimeout <= 0 {
+		failoverTimeout = 60 * time.Second
+	}
+	log.Printf("[failover] %s: 开始主备路由，共 %d/%d 个站点, 单节点超时=%v", fo.Name, total, maxFailoverEntries, failoverTimeout)
 	for i, entry := range fo.Entries {
 		provider := getProvider(entry.ProviderID)
 		if provider == nil {
@@ -410,7 +430,7 @@ func proxyFailoverRequest(w http.ResponseWriter, r *http.Request, clientFormat s
 
 		log.Printf("[failover] %s: [%d/%d] 尝试站点 %s (order=%d, model=%s)", fo.Name, i+1, total, provider.Name, entry.Order, entry.Model)
 		// 主备路由：单站点仅重试 1 次（延迟 1s），失败即顺延到下一个站点
-		handled := forwardToProvider(w, r, clientFormat, provider, entry.Model, body, params, isStream, 1)
+		handled := forwardToProvider(w, r, clientFormat, provider, entry.Model, body, params, isStream, 1, failoverTimeout)
 		if handled {
 			log.Printf("[failover] %s: [%d/%d] 站点 %s / 模型 %s 成功，返回结果", fo.Name, i+1, total, provider.Name, entry.Model)
 			return // 该站点成功或错误已写入响应

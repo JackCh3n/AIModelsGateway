@@ -84,6 +84,8 @@ type Settings struct {
 	OutputPresets    []string `json:"outputPresets"` // 输出预算预设
 	// 全局自定义 User-Agent：转发到上游时使用的请求头，覆盖 Go 默认的 go-http-client/1.1
 	UserAgent string `json:"userAgent"`
+	// FailoverTimeout 主备路由单节点请求超时（秒），默认 60；超时无响应则顺延下一个站点
+	FailoverTimeout int `json:"failoverTimeout"`
 	// 狂暴模式：启用 Redis 统计 + 加大连接池，支持更高并发
 	RageMode      bool   `json:"rageMode"`
 	RedisAddr     string `json:"redisAddr"`     // Redis 地址，如 127.0.0.1:6379

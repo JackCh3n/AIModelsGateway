@@ -255,6 +255,10 @@ tr:hover{background:var(--hover)}
 <label>全局 User-Agent (转发到上游时的请求头，覆盖默认 go-http-client/1.1)</label>
 <input class="input" id="globalUserAgentInput" placeholder="如: Mozilla/5.0 (Windows NT 10.0; Win64; x64) ... 留空则保持默认">
 </div>
+<div class="form-group" style="margin-bottom:16px">
+<label>主备路由单节点请求超时（秒，默认 60）：单站点请求超过该时间无响应时，自动顺延到下一个站点/模型</label>
+<input class="input" id="failoverTimeoutInput" type="number" min="1" placeholder="60">
+</div>
 <div class="form-row">
 <div class="form-group">
 <label>输入预算预设 (回车添加，或逗号分隔添加多个)</label>
@@ -2417,6 +2421,7 @@ activeProviderId=data.activeProviderId||'';
 if(data.inputPresets&&data.inputPresets.length)inputPresets=data.inputPresets;
 if(data.outputPresets&&data.outputPresets.length)outputPresets=data.outputPresets;
 document.getElementById('globalUserAgentInput').value=data.userAgent||'';
+document.getElementById('failoverTimeoutInput').value=data.failoverTimeout||60;
 renderPresetEditors();
 loadGlobalModelConfigs();
 // 狂暴模式
@@ -2599,7 +2604,8 @@ const ipVal=document.getElementById('inputPresetInput').value.trim();
 if(ipVal&&!inputPresets.includes(ipVal))inputPresets.push(ipVal);
 const opVal=document.getElementById('outputPresetInput').value.trim();
 if(opVal&&!outputPresets.includes(opVal))outputPresets.push(opVal);
-const res=await fetch(API+'/settings',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({activeProviderId:activeProviderId,inputPresets:inputPresets,outputPresets:outputPresets,userAgent:document.getElementById('globalUserAgentInput').value.trim()})});
+const failoverTimeout=parseInt(document.getElementById('failoverTimeoutInput').value)||60;
+const res=await fetch(API+'/settings',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({activeProviderId:activeProviderId,inputPresets:inputPresets,outputPresets:outputPresets,userAgent:document.getElementById('globalUserAgentInput').value.trim(),failoverTimeout:failoverTimeout})});
 if(res.ok){
 toast('已保存','success');
 }
