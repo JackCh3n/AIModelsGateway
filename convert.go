@@ -73,6 +73,7 @@ func anthropicToOpenAIReq(body []byte) (map[string]any, error) {
 				textParts := []string{}
 				var toolCalls []any
 				var toolResults []any
+				var imageBlocks []any // OpenAI image_url blocks（多模态）
 
 				for _, block := range c {
 					b, ok := block.(map[string]any)
@@ -83,6 +84,11 @@ func anthropicToOpenAIReq(body []byte) (map[string]any, error) {
 					case "text":
 						if t, ok := b["text"].(string); ok {
 							textParts = append(textParts, t)
+						}
+					case "image":
+						// Anthropic image block -> OpenAI image_url
+						if oi := anthropicImageToOpenAI(b); oi != nil {
+							imageBlocks = append(imageBlocks, oi)
 						}
 					case "tool_use":
 						argsStr := "{}"
@@ -130,6 +136,14 @@ func anthropicToOpenAIReq(body []byte) (map[string]any, error) {
 				} else if role == "user" && len(toolResults) > 0 {
 					// 多个 tool_result 需拆成多条独立 tool 消息，避免覆盖丢失
 					msgs = append(msgs, toolResults...)
+				} else if len(imageBlocks) > 0 {
+					// 多模态：user/assistant 消息含图片 -> OpenAI content 数组（text + image_url）
+					blocks := []any{}
+					if joined := strings.Join(textParts, "\n"); joined != "" {
+						blocks = append(blocks, map[string]any{"type": "text", "text": joined})
+					}
+					blocks = append(blocks, imageBlocks...)
+					msgs = append(msgs, map[string]any{"role": role, "content": blocks})
 				} else {
 					msgs = append(msgs, map[string]any{"role": role, "content": strings.Join(textParts, "\n")})
 				}
@@ -254,8 +268,26 @@ func openAIToAnthropicReq(body []byte) (map[string]any, error) {
 			} else if s, ok := content.(string); ok {
 				msgs = append(msgs, map[string]any{"role": role, "content": s})
 			} else if arr, ok := content.([]any); ok {
-				// 已经是 content blocks 格式
-				msgs = append(msgs, map[string]any{"role": role, "content": arr})
+				// OpenAI 多模态 content 数组 -> Anthropic content blocks（含 image_url -> image 转换）
+				blocks := make([]any, 0, len(arr))
+				for _, blk := range arr {
+					bm, ok := blk.(map[string]any)
+					if !ok {
+						continue
+					}
+					switch bm["type"] {
+					case "text":
+						blocks = append(blocks, bm)
+					case "image_url":
+						if ai := openAIImageToAnthropic(bm); ai != nil {
+							blocks = append(blocks, ai)
+						}
+					default:
+						// 其他块（如 input_audio 等）原样透传
+						blocks = append(blocks, bm)
+					}
+				}
+				msgs = append(msgs, map[string]any{"role": role, "content": blocks})
 			}
 		}
 	}
@@ -498,6 +530,85 @@ func extractStringContent(raw any) string {
 		return strings.Join(parts, "\n")
 	}
 	return ""
+}
+
+// anthropicImageToOpenAI 将 Anthropic image block 转为 OpenAI image_url block。
+// Anthropic: {"type":"image","source":{"type":"base64","media_type":..,"data":..}}
+// 或 {"type":"image","source":{"type":"url","url":..}}
+// OpenAI:   {"type":"image_url","image_url":{"url":"data:<media>;base64,<data>"}}
+func anthropicImageToOpenAI(b map[string]any) map[string]any {
+	source, _ := b["source"].(map[string]any)
+	if source == nil {
+		return nil
+	}
+	switch st, _ := source["type"].(string); st {
+	case "base64":
+		mediaType, _ := source["media_type"].(string)
+		data, _ := source["data"].(string)
+		return map[string]any{
+			"type": "image_url",
+			"image_url": map[string]any{
+				"url": "data:" + mediaType + ";base64," + data,
+			},
+		}
+	case "url":
+		url, _ := source["url"].(string)
+		return map[string]any{
+			"type": "image_url",
+			"image_url": map[string]any{"url": url},
+		}
+	}
+	return nil
+}
+
+// openAIImageToAnthropic 将 OpenAI image_url block 转为 Anthropic image block。
+// OpenAI:   {"type":"image_url","image_url":{"url":"data:<media>;base64,<data>"}}
+//           url 也可能是 http(s) 地址
+// Anthropic: {"type":"image","source":{"type":"base64","media_type":..,"data":..}}
+// 或        {"type":"image","source":{"type":"url","url":..}}
+func openAIImageToAnthropic(b map[string]any) map[string]any {
+	iu, _ := b["image_url"].(map[string]any)
+	if iu == nil {
+		return nil
+	}
+	url, _ := iu["url"].(string)
+	if url == "" {
+		return nil
+	}
+	// data URL: data:<media_type>;base64,<data>
+	if strings.HasPrefix(url, "data:") {
+		if comma := strings.Index(url, ";base64,"); comma > 0 {
+			mediaType := url[len("data:"):comma]
+			data := url[comma+len(";base64,"):]
+			return map[string]any{
+				"type": "image",
+				"source": map[string]any{
+					"type":       "base64",
+					"media_type": mediaType,
+					"data":       data,
+				},
+			}
+		}
+	}
+	// http(s) 直链
+	if strings.HasPrefix(url, "http://") || strings.HasPrefix(url, "https://") {
+		return map[string]any{
+			"type": "image",
+			"source": map[string]any{
+				"type": "url",
+				"url":  url,
+			},
+		}
+	}
+	// 纯 base64 内容（无前缀）：按 image/png 处理
+	return map[string]any{
+		"type": "image",
+		"source": map[string]any{
+			"type":       "base64",
+			"media_type": "image/png",
+			"data":       url,
+		},
+	}
 }
 
 func anthropicToolsToOpenAI(tools []any) []any {

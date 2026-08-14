@@ -197,8 +197,7 @@ func TestExtractCacheFromUsage(t *testing.T) {	// DeepSeek 风格
 }
 
 // 测试主备路由熔断器：连续失败达到阈值后熔断，成功后恢复
-func TestFailoverBreaker(t *testing.T) {
-	b := &breaker{states: make(map[string]*breakerState)}
+func TestFailoverBreaker(t *testing.T) {	b := &breaker{states: make(map[string]*breakerState)}
 	if !b.allow("p1") {
 		t.Fatal("初始状态应放行")
 	}
@@ -227,5 +226,83 @@ func TestFailoverBreaker(t *testing.T) {
 	b.mu.Unlock()
 	if !b.allow("p1") {
 		t.Error("冷却期结束后应恢复放行")
+	}
+}
+
+// 测试多模态图片转换：Anthropic image block -> OpenAI image_url
+func TestAnthropicImageToOpenAI(t *testing.T) {
+	body := `{
+		"model": "claude-3-5",
+		"max_tokens": 100,
+		"messages": [{
+			"role": "user",
+			"content": [
+				{"type": "text", "text": "看这张图"},
+				{"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": "iVBORw0KGgo="}}
+			]
+		}]
+	}`
+	out, err := anthropicToOpenAIReq([]byte(body))
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	msgs, _ := out["messages"].([]any)
+	if len(msgs) != 1 {
+		t.Fatalf("expected 1 message, got %d", len(msgs))
+	}
+	m := msgs[0].(map[string]any)
+	content, ok := m["content"].([]any)
+	if !ok {
+		t.Fatalf("多模态消息 content 应为数组，got %T", m["content"])
+	}
+	if len(content) != 2 {
+		t.Fatalf("expected 2 blocks (text+image), got %d", len(content))
+	}
+	img := content[1].(map[string]any)
+	if img["type"] != "image_url" {
+		t.Fatalf("block type = %v, want image_url", img["type"])
+	}
+	iu := img["image_url"].(map[string]any)
+	if iu["url"] != "data:image/png;base64,iVBORw0KGgo=" {
+		t.Errorf("url = %v", iu["url"])
+	}
+}
+
+// 测试多模态图片转换：OpenAI image_url -> Anthropic image
+func TestOpenAIImageToAnthropic(t *testing.T) {
+	body := `{
+		"model": "gpt-4o",
+		"max_tokens": 100,
+		"messages": [{
+			"role": "user",
+			"content": [
+				{"type": "text", "text": "看这张图"},
+				{"type": "image_url", "image_url": {"url": "data:image/jpeg;base64,/9j/4AAQ"}}
+			]
+		}]
+	}`
+	out, err := openAIToAnthropicReq([]byte(body))
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	msgs, _ := out["messages"].([]any)
+	if len(msgs) != 1 {
+		t.Fatalf("expected 1 message, got %d", len(msgs))
+	}
+	m := msgs[0].(map[string]any)
+	content, ok := m["content"].([]any)
+	if !ok {
+		t.Fatalf("content 应为数组，got %T", m["content"])
+	}
+	if len(content) != 2 {
+		t.Fatalf("expected 2 blocks, got %d", len(content))
+	}
+	img := content[1].(map[string]any)
+	if img["type"] != "image" {
+		t.Fatalf("block type = %v, want image", img["type"])
+	}
+	src := img["source"].(map[string]any)
+	if src["type"] != "base64" || src["media_type"] != "image/jpeg" || src["data"] != "/9j/4AAQ" {
+		t.Errorf("source = %v", src)
 	}
 }
