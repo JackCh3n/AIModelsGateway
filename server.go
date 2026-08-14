@@ -186,24 +186,30 @@ func startServer(port int, listenOverride string) error {
 	mux.HandleFunc("/v1/messages/p/", anthropicProviderHandler)
 	mux.HandleFunc("/messages/p/", anthropicProviderHandler)
 
-	// 模型列表
+	// 模型列表：聚合所有启用站点的模型并集（去重）
 	modelsHandler := authMiddleware(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != "GET" {
 			writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "GET required"})
 			return
 		}
-		provider := getActiveProvider()
+		cfg := loadConfig()
 		models := []map[string]any{}
-		if provider != nil {
-			for _, m := range provider.Models {
-				if !isModelEnabled(provider, m) {
+		seen := map[string]bool{}
+		for i := range cfg.Providers {
+			p := &cfg.Providers[i]
+			if p.Status != "active" {
+				continue
+			}
+			for _, m := range p.Models {
+				if !isModelEnabled(p, m) || seen[m] {
 					continue
 				}
+				seen[m] = true
 				models = append(models, map[string]any{
 					"id":       m,
 					"object":   "model",
 					"created":  time.Now().Unix(), // OpenAI 规范为 Unix 秒
-					"owned_by": provider.Name,
+					"owned_by": p.Name,
 				})
 			}
 		}
