@@ -109,7 +109,13 @@ func getHTTPClient(p *Provider) *http.Client {
 func proxyRequest(w http.ResponseWriter, r *http.Request, clientFormat string, providerOverride string) {
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
-		writeError(w, clientFormat, http.StatusBadRequest, "read body: "+err.Error())
+		// 请求体超过上限（limitBody 中间件设置）：返回 413 而非 400
+		var mbe *http.MaxBytesError
+		status := http.StatusBadRequest
+		if errors.As(err, &mbe) {
+			status = http.StatusRequestEntityTooLarge
+		}
+		writeError(w, clientFormat, status, "read body: "+err.Error())
 		return
 	}
 

@@ -39,6 +39,21 @@ func netAddrTip(addr string) string {
 	return ""
 }
 
+// maxBodyBytes 请求体大小上限：32MB，防止恶意超大 body 打爆内存（DoS）
+const maxBodyBytes = 32 << 20
+
+// limitBody 限制请求体大小的中间件（超限后读取返回 MaxBytesError）
+func limitBody(maxBytes int64) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.Body != nil {
+				r.Body = http.MaxBytesReader(w, r.Body, maxBytes)
+			}
+			next.ServeHTTP(w, r)
+		})
+	}
+}
+
 func corsHandler(h http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Access-Control-Allow-Origin", "*")
@@ -234,7 +249,7 @@ func startServer(port int, listenOverride string) error {
 
 	server := &http.Server{
 		Addr:              addr,
-		Handler:           adminAuth(mux), // 管理后台 API 可选登录保护
+		Handler:           limitBody(maxBodyBytes)(adminAuth(mux)), // 请求体大小上限 + 管理后台可选登录保护
 		ReadHeaderTimeout: 10 * time.Second, // 防止 slowloris 攻击
 		ReadTimeout:       30 * time.Second,
 		WriteTimeout:      5 * time.Minute,  // 兼容流式响应
