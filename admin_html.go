@@ -47,9 +47,7 @@ tr:hover{background:var(--hover)}
 .badge-openai{background:rgba(59,130,246,.15);color:var(--blue)}
 .badge-warning{background:rgba(245,158,11,.15);color:#f59e0b}
 .badge-danger{background:rgba(239,68,68,.18);color:var(--red)}
-.errkey{cursor:pointer;color:var(--muted);letter-spacing:1px;user-select:none}
-.errkey:hover{color:var(--accent)}
-.errkey-full{font-family:'Courier New',monospace;font-size:11px;word-break:break-all;color:var(--muted);cursor:pointer}
+.errkey-mono{font-family:'Courier New',monospace;font-size:11px;word-break:break-all;color:var(--muted)}
 .badge-anthropic{background:rgba(239,68,68,.15);color:var(--red)}
 .badge-current{background:var(--accent);color:#fff}
 .btn{padding:8px 16px;border:none;border-radius:var(--radius);cursor:pointer;font-size:13px;font-weight:500;transition:.2s}
@@ -2373,10 +2371,13 @@ errorLogsCurrentPage=page;
 const lRes=await fetch(API+'/error-logs?page='+page+'&pageSize='+errorLogsPageSize);
 const data=await lRes.json();
 const logs=data.logs||[];
+// 完整 Key 存入全局数组（按索引访问），避免完整 Key 内联进 onclick 导致转义/泄露问题
+window._errKeyData=[];
 let lg='<table><tr><th>时间</th><th>状态码</th><th>站点</th><th>模型</th><th>调用</th><th>API Key</th><th>错误信息</th></tr>';
 for(const l of logs){
 const codeCls=l.statusCode>=500?'badge badge-danger':(l.statusCode>=400?'badge badge-warning':'badge badge-openai');
-lg+='<tr><td>'+fmtDate(l.timestamp)+'</td><td><span class="'+codeCls+'">'+l.statusCode+'</span></td><td>'+esc(l.providerName)+'</td><td class="mono">'+esc(l.model)+'</td><td>'+esc(l.route)+'</td><td><span class="errkey" onclick="toggleErrKey(this)">••••••••</span><span class="errkey-full" style="display:none">'+esc(l.apiKey||'')+'</span></td><td class="mono" style="font-size:11px;max-width:380px;word-break:break-all">'+esc(l.message)+'</td></tr>';
+const keyIdx=window._errKeyData.push(l.apiKey||'')-1;
+lg+='<tr><td>'+fmtDate(l.timestamp)+'</td><td><span class="'+codeCls+'">'+l.statusCode+'</span></td><td>'+esc(l.providerName)+'</td><td class="mono">'+esc(l.model)+'</td><td>'+esc(l.route)+'</td><td class="errkey-mono"><span id="errkey-'+keyIdx+'">'+esc(maskKey(l.apiKey||''))+'</span> <button class="copy-btn" onclick="toggleErrKey('+keyIdx+',this)" title="显示完整 Key">👁</button></td><td class="mono" style="font-size:11px;max-width:380px;word-break:break-all">'+esc(l.message)+'</td></tr>';
 }
 if(logs.length===0)lg+='<tr><td colspan="7" class="empty">暂无错误日志</td></tr>';
 lg+='</table>';
@@ -2385,15 +2386,27 @@ document.getElementById('errorLogs').innerHTML=lg;
 renderErrorLogPagination(data.page||1,data.pages||0,data.total||0);
 }
 
-// toggleErrKey 点击 API Key 时在隐藏/显示之间切换
-function toggleErrKey(el){
-const full=el.parentElement.querySelector('.errkey-full');
-if(full.style.display==='none'){
-full.style.display='inline';
-el.style.display='none';
+// maskKey 展示 Key 前 8 个字符，其余省略（空值显示 -）
+function maskKey(key){
+if(!key)return'-';
+return key.length<=8?key:key.slice(0,8)+'…';
+}
+
+// toggleErrKey 点击小眼睛图标在「前缀/完整」之间切换 API Key 显示
+function toggleErrKey(idx,btn){
+const span=document.getElementById('errkey-'+idx);
+if(!span)return;
+const key=(window._errKeyData||[])[idx]||'';
+if(span.dataset.full==='1'){
+span.dataset.full='0';
+span.textContent=maskKey(key);
+btn.textContent='👁';
+btn.title='显示完整 Key';
 }else{
-full.style.display='none';
-el.style.display='inline';
+span.dataset.full='1';
+span.textContent=key||'(空)';
+btn.textContent='🙈';
+btn.title='隐藏 Key';
 }
 }
 
