@@ -6,19 +6,25 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/redis/go-redis/v9"
 )
 
 var (
-	rdb          *redis.Client
-	redisEnabled bool
+	rdb          atomic.Pointer[redis.Client] // 无锁读：请求路径 Load() 直接取 client
+	redisEnabled atomic.Bool                  // 无锁读：请求路径 Load() 判断是否启用
 	redisMu      sync.Mutex
 	// redisLogCh 异步写入 channel：请求路径不再同步等 Pipeline 返回，支持万级并发
 	redisLogCh   chan UsageLog
 	redisLogOnce sync.Once
 )
+
+// redisReady 判断 Redis 统计是否可用（全部原子读，无锁竞争）
+func redisReady() bool {
+	return redisEnabled.Load() && rdb.Load() != nil && redisLogCh != nil
+}
 
 // initRedis 初始化 Redis 连接（狂暴模式启用时调用）
 func initRedis(addr, password string, db int) {
@@ -30,11 +36,11 @@ func initRedis(addr, password string, db int) {
 		return
 	}
 
-	if rdb != nil {
-		rdb.Close()
+	if c := rdb.Load(); c != nil {
+		c.Close()
 	}
 
-	rdb = redis.NewClient(&redis.Options{
+	client := redis.NewClient(&redis.Options{
 		Addr:         addr,
 		Password:     password,
 		DB:           db,
@@ -44,17 +50,18 @@ func initRedis(addr, password string, db int) {
 		ReadTimeout:  2 * time.Second,
 		WriteTimeout: 2 * time.Second,
 	})
+	rdb.Store(client)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
-	if err := rdb.Ping(ctx).Err(); err != nil {
+	if err := client.Ping(ctx).Err(); err != nil {
 		log.Printf("[redis] 连接失败: %v", err)
-		rdb = nil
-		redisEnabled = false
+		rdb.Store(nil)
+		redisEnabled.Store(false)
 		return
 	}
 
-	redisEnabled = true
+	redisEnabled.Store(true)
 	// 启动异步 worker（仅一次）
 	redisLogOnce.Do(func() {
 		redisLogCh = make(chan UsageLog, 20000)
@@ -84,18 +91,16 @@ func testRedisConnection(addr, password string, db int) error {
 // 顺序：先标记禁用（阻止新数据入 channel）-> 刷盘待写入统计 -> 关闭连接 -> 恢复普通连接池
 func closeRedis() {
 	redisMu.Lock()
-	redisEnabled = false // 先标记禁用，redisIncrUsage 不再投递
+	redisEnabled.Store(false) // 先标记禁用，redisIncrUsage 不再投递
 	redisMu.Unlock()
 
 	// 刷盘 channel 中待写入的统计（避免丢数据）
 	flushRedisLogs()
 
-	redisMu.Lock()
-	if rdb != nil {
-		rdb.Close()
-		rdb = nil
+	if c := rdb.Load(); c != nil {
+		c.Close()
 	}
-	redisMu.Unlock()
+	rdb.Store(nil)
 
 	restoreNormalPool()
 	log.Printf("[redis] 已断开（恢复普通模式）")
@@ -104,7 +109,7 @@ func closeRedis() {
 // redisIncrUsage 异步递增统计：仅向 channel 投递，不阻塞请求路径
 // 由后台 redisWorker 批量执行 Pipeline，一次网络往返完成 N*16 条 HINCRBY
 func redisIncrUsage(entry UsageLog) {
-	if !redisEnabled || rdb == nil || redisLogCh == nil {
+	if !redisReady() {
 		return
 	}
 	select {
@@ -144,9 +149,7 @@ func redisWorker() {
 // processRedisBatch 批量执行 Pipeline：聚合同 key+field 的增量，减少命令数
 // 注意：不检查 redisEnabled，仅检查 rdb，以便 closeRedis 时刷盘待写入统计
 func processRedisBatch(batch []UsageLog) {
-	redisMu.Lock()
-	client := rdb
-	redisMu.Unlock()
+	client := rdb.Load()
 	if client == nil || len(batch) == 0 {
 		return
 	}
@@ -154,8 +157,10 @@ func processRedisBatch(batch []UsageLog) {
 	pipe := client.Pipeline()
 	// 聚合：同一 (key, field) 累加，减少 HIncrBy 命令数
 	type agg struct {
-		count               int64
+		count                int64
 		input, output, total int64
+		ttft, duration       int64 // 性能指标：首 token 延迟与总耗时（毫秒）
+		cacheHit, cacheMiss  int64 // 缓存命中/未命中输入 token
 	}
 	total := agg{}
 	byProvider := map[string]*agg{}
@@ -168,6 +173,10 @@ func processRedisBatch(batch []UsageLog) {
 		total.input += int64(e.InputTokens)
 		total.output += int64(e.OutputTokens)
 		total.total += int64(e.TotalTokens)
+		total.ttft += int64(e.TTFTMs)
+		total.duration += int64(e.DurationMs)
+		total.cacheHit += int64(e.CacheHit)
+		total.cacheMiss += int64(e.CacheMiss)
 
 		p := byProvider[e.ProviderName]
 		if p == nil {
@@ -210,6 +219,10 @@ func processRedisBatch(batch []UsageLog) {
 	pipe.HIncrBy(ctx, "usage:total", "totalInput", total.input)
 	pipe.HIncrBy(ctx, "usage:total", "totalOutput", total.output)
 	pipe.HIncrBy(ctx, "usage:total", "totalTokens", total.total)
+	pipe.HIncrBy(ctx, "usage:total", "totalTTFT", total.ttft)
+	pipe.HIncrBy(ctx, "usage:total", "totalDuration", total.duration)
+	pipe.HIncrBy(ctx, "usage:total", "cacheHit", total.cacheHit)
+	pipe.HIncrBy(ctx, "usage:total", "cacheMiss", total.cacheMiss)
 	// 按站点
 	for name, a := range byProvider {
 		pipe.HIncrBy(ctx, "usage:byProvider", name+"|count", a.count)
@@ -263,34 +276,56 @@ func flushRedisLogs() {
 
 // redisGetUsageStats 从 Redis 读取统计数据
 func redisGetUsageStats() map[string]any {
-	if !redisEnabled || rdb == nil {
+	if !redisReady() {
 		return nil
 	}
+	client := rdb.Load()
 	ctx := context.Background()
 	result := map[string]any{}
 
 	// 总计
-	totalFields, err := rdb.HGetAll(ctx, "usage:total").Result()
+	totalFields, err := client.HGetAll(ctx, "usage:total").Result()
 	if err == nil {
 		result["totalInput"] = parseInt64(totalFields["totalInput"])
 		result["totalOutput"] = parseInt64(totalFields["totalOutput"])
 		result["totalTokens"] = parseInt64(totalFields["totalTokens"])
 		result["totalReqs"] = parseInt64(totalFields["totalReqs"])
+		// 性能指标聚合
+		totalReqs := result["totalReqs"].(int64)
+		totalTTFT := parseInt64(totalFields["totalTTFT"])
+		totalDuration := parseInt64(totalFields["totalDuration"])
+		cacheHit := parseInt64(totalFields["cacheHit"])
+		cacheMiss := parseInt64(totalFields["cacheMiss"])
+		result["avgTTFTMs"] = float64(0)
+		result["avgOutputSpeed"] = float64(0)
+		result["cacheHitRate"] = float64(-1)
+		if totalReqs > 0 {
+			result["avgTTFTMs"] = float64(totalTTFT) / float64(totalReqs)
+			if totalDuration > 0 {
+				result["avgOutputSpeed"] = float64(result["totalOutput"].(int64)) / (float64(totalDuration) / 1000.0)
+			}
+		}
+		if cacheHit+cacheMiss > 0 {
+			result["cacheHitRate"] = float64(cacheHit) / float64(cacheHit+cacheMiss)
+		}
 	} else {
 		result["totalInput"] = int64(0)
 		result["totalOutput"] = int64(0)
 		result["totalTokens"] = int64(0)
 		result["totalReqs"] = int64(0)
+		result["avgTTFTMs"] = float64(0)
+		result["avgOutputSpeed"] = float64(0)
+		result["cacheHitRate"] = float64(-1)
 	}
 
 	// 按维度解析 Hash
-	result["byProvider"] = parseUsageHash(rdb.HGetAll(ctx, "usage:byProvider").Result())
-	result["byModel"] = parseUsageHash(rdb.HGetAll(ctx, "usage:byModel").Result())
-	result["byDate"] = parseUsageHash(rdb.HGetAll(ctx, "usage:byDate").Result())
+	result["byProvider"] = parseUsageHash(client.HGetAll(ctx, "usage:byProvider").Result())
+	result["byModel"] = parseUsageHash(client.HGetAll(ctx, "usage:byModel").Result())
+	result["byDate"] = parseUsageHash(client.HGetAll(ctx, "usage:byDate").Result())
 
 	// 当日各模型请求次数
 	today := time.Now().Format("2006-01-02")
-	todayModelFields, err := rdb.HGetAll(ctx, "usage:byModelToday:"+today).Result()
+	todayModelFields, err := client.HGetAll(ctx, "usage:byModelToday:"+today).Result()
 	byModelToday := map[string]int64{}
 	if err == nil {
 		for model, v := range todayModelFields {
@@ -329,12 +364,13 @@ func parseInt64(s string) int64 {
 
 // redisClearStats 清空 Redis 统计
 func redisClearStats() {
-	if !redisEnabled || rdb == nil {
+	if !redisReady() {
 		return
 	}
+	client := rdb.Load()
 	ctx := context.Background()
-	rdb.Del(ctx, "usage:total", "usage:byProvider", "usage:byModel", "usage:byDate")
+	client.Del(ctx, "usage:total", "usage:byProvider", "usage:byModel", "usage:byDate")
 	// 清空当日模型统计（含历史日期键）
 	today := time.Now().Format("2006-01-02")
-	rdb.Del(ctx, "usage:byModelToday:"+today)
+	client.Del(ctx, "usage:byModelToday:"+today)
 }

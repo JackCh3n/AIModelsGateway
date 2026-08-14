@@ -43,7 +43,11 @@ func initDB() {
 			output_tokens INTEGER,
 			total_tokens INTEGER,
 			client_format TEXT,
-			timestamp DATETIME
+			timestamp DATETIME,
+			ttft_ms INTEGER,
+			duration_ms INTEGER,
+			cache_hit INTEGER,
+			cache_miss INTEGER
 		)`)
 		if err != nil {
 			log.Printf("sqlite create table error: %v", err)
@@ -53,6 +57,11 @@ func initDB() {
 		_, _ = db.Exec("CREATE INDEX IF NOT EXISTS idx_logs_ts ON usage_logs(timestamp DESC)")
 		_, _ = db.Exec("CREATE INDEX IF NOT EXISTS idx_logs_provider ON usage_logs(provider_name)")
 		_, _ = db.Exec("CREATE INDEX IF NOT EXISTS idx_logs_model ON usage_logs(model)")
+		// 兼容旧表：补充性能指标列（已存在时报错忽略）
+		_, _ = db.Exec("ALTER TABLE usage_logs ADD COLUMN ttft_ms INTEGER")
+		_, _ = db.Exec("ALTER TABLE usage_logs ADD COLUMN duration_ms INTEGER")
+		_, _ = db.Exec("ALTER TABLE usage_logs ADD COLUMN cache_hit INTEGER")
+		_, _ = db.Exec("ALTER TABLE usage_logs ADD COLUMN cache_miss INTEGER")
 		// 错误日志表
 		_, err = db.Exec(`CREATE TABLE IF NOT EXISTS error_logs (
 			id TEXT PRIMARY KEY,
@@ -82,9 +91,10 @@ func dbAddUsageLog(entry UsageLog) {
 	if db == nil {
 		return
 	}
-	_, err := db.Exec("INSERT OR IGNORE INTO usage_logs(id,provider_id,provider_name,model,input_tokens,output_tokens,total_tokens,client_format,timestamp) VALUES(?,?,?,?,?,?,?,?,?)",
+	_, err := db.Exec("INSERT OR IGNORE INTO usage_logs(id,provider_id,provider_name,model,input_tokens,output_tokens,total_tokens,client_format,timestamp,ttft_ms,duration_ms,cache_hit,cache_miss) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)",
 		entry.ID, entry.ProviderID, entry.ProviderName, entry.Model,
 		entry.InputTokens, entry.OutputTokens, entry.TotalTokens, entry.ClientFormat, entry.Timestamp,
+		entry.TTFTMs, entry.DurationMs, entry.CacheHit, entry.CacheMiss,
 	)
 	if err != nil {
 		log.Printf("sqlite insert error: %v", err)
@@ -140,6 +150,12 @@ func dbGetErrorLogs(page, pageSize int) ([]ErrorLog, int) {
 	if db == nil {
 		return []ErrorLog{}, 0
 	}
+	if page < 1 {
+		page = 1
+	}
+	if pageSize <= 0 || pageSize > 500 {
+		pageSize = 50
+	}
 	var total int
 	_ = db.QueryRow("SELECT COUNT(*) FROM error_logs").Scan(&total)
 	off := (page - 1) * pageSize
@@ -176,7 +192,7 @@ func dbBatchInsertUsageLogs(entries []UsageLog) {
 		}
 		return
 	}
-	stmt, err := tx.Prepare("INSERT OR IGNORE INTO usage_logs(id,provider_id,provider_name,model,input_tokens,output_tokens,total_tokens,client_format,timestamp) VALUES(?,?,?,?,?,?,?,?,?)")
+	stmt, err := tx.Prepare("INSERT OR IGNORE INTO usage_logs(id,provider_id,provider_name,model,input_tokens,output_tokens,total_tokens,client_format,timestamp,ttft_ms,duration_ms,cache_hit,cache_miss) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)")
 	if err != nil {
 		tx.Rollback()
 		log.Printf("sqlite batch prepare error: %v", err)
@@ -185,7 +201,8 @@ func dbBatchInsertUsageLogs(entries []UsageLog) {
 	defer stmt.Close()
 	for _, e := range entries {
 		_, _ = stmt.Exec(e.ID, e.ProviderID, e.ProviderName, e.Model,
-			e.InputTokens, e.OutputTokens, e.TotalTokens, e.ClientFormat, e.Timestamp)
+			e.InputTokens, e.OutputTokens, e.TotalTokens, e.ClientFormat, e.Timestamp,
+			e.TTFTMs, e.DurationMs, e.CacheHit, e.CacheMiss)
 	}
 	if err := tx.Commit(); err != nil {
 		log.Printf("sqlite batch commit error: %v", err)
@@ -198,10 +215,25 @@ func dbGetUsageStats() map[string]any {
 	if db == nil {
 		return emptyStats()
 	}
-	// 总计
+	// 总计（含性能指标聚合）
 	var totalInput, totalOutput, totalAll, totalReqs int64
-	row := db.QueryRow("SELECT COALESCE(SUM(input_tokens),0),COALESCE(SUM(output_tokens),0),COALESCE(SUM(total_tokens),0),COUNT(*) FROM usage_logs")
-	row.Scan(&totalInput, &totalOutput, &totalAll, &totalReqs)
+	var totalTTFT, totalDuration, cacheHit, cacheMiss int64
+	row := db.QueryRow("SELECT COALESCE(SUM(input_tokens),0),COALESCE(SUM(output_tokens),0),COALESCE(SUM(total_tokens),0),COUNT(*),COALESCE(SUM(ttft_ms),0),COALESCE(SUM(duration_ms),0),COALESCE(SUM(cache_hit),0),COALESCE(SUM(cache_miss),0) FROM usage_logs")
+	row.Scan(&totalInput, &totalOutput, &totalAll, &totalReqs, &totalTTFT, &totalDuration, &cacheHit, &cacheMiss)
+
+	// 性能指标：平均首 token 延迟 / 平均输出速度 / 缓存命中率
+	avgTTFTMs := float64(0)
+	avgOutputSpeed := float64(0)
+	cacheRate := float64(-1) // -1 表示无缓存数据
+	if totalReqs > 0 {
+		avgTTFTMs = float64(totalTTFT) / float64(totalReqs)
+		if totalDuration > 0 {
+			avgOutputSpeed = float64(totalOutput) / (float64(totalDuration) / 1000.0)
+		}
+	}
+	if cacheHit+cacheMiss > 0 {
+		cacheRate = float64(cacheHit) / float64(cacheHit+cacheMiss)
+	}
 
 	byProvider := map[string]map[string]int64{}
 	byModel := map[string]map[string]int64{}
@@ -261,14 +293,17 @@ func dbGetUsageStats() map[string]any {
 	}
 
 	return map[string]any{
-		"totalInput":   totalInput,
-		"totalOutput":  totalOutput,
-		"totalTokens":  totalAll,
-		"totalReqs":    totalReqs,
-		"byProvider":   byProvider,
-		"byModel":      byModel,
-		"byDate":       byDate,
-		"byModelToday": byModelToday,
+		"totalInput":      totalInput,
+		"totalOutput":     totalOutput,
+		"totalTokens":     totalAll,
+		"totalReqs":       totalReqs,
+		"avgTTFTMs":       avgTTFTMs,
+		"avgOutputSpeed":  avgOutputSpeed,
+		"cacheHitRate":    cacheRate,
+		"byProvider":      byProvider,
+		"byModel":         byModel,
+		"byDate":          byDate,
+		"byModelToday":    byModelToday,
 	}
 }
 
@@ -288,7 +323,7 @@ func dbGetRecentLogs(page, pageSize int) ([]UsageLog, int) {
 	db.QueryRow("SELECT COUNT(*) FROM usage_logs").Scan(&total)
 
 	offset := (page - 1) * pageSize
-	rows, err := db.Query("SELECT id,provider_id,provider_name,model,input_tokens,output_tokens,total_tokens,client_format,timestamp FROM usage_logs ORDER BY timestamp DESC LIMIT ? OFFSET ?", pageSize, offset)
+	rows, err := db.Query("SELECT id,provider_id,provider_name,model,input_tokens,output_tokens,total_tokens,client_format,timestamp,COALESCE(ttft_ms,0),COALESCE(duration_ms,0),COALESCE(cache_hit,0),COALESCE(cache_miss,0) FROM usage_logs ORDER BY timestamp DESC LIMIT ? OFFSET ?", pageSize, offset)
 	if err != nil {
 		log.Printf("sqlite query logs error: %v", err)
 		return []UsageLog{}, total
@@ -299,7 +334,7 @@ func dbGetRecentLogs(page, pageSize int) ([]UsageLog, int) {
 	for rows.Next() {
 		var l UsageLog
 		var ts time.Time
-		rows.Scan(&l.ID, &l.ProviderID, &l.ProviderName, &l.Model, &l.InputTokens, &l.OutputTokens, &l.TotalTokens, &l.ClientFormat, &ts)
+		rows.Scan(&l.ID, &l.ProviderID, &l.ProviderName, &l.Model, &l.InputTokens, &l.OutputTokens, &l.TotalTokens, &l.ClientFormat, &ts, &l.TTFTMs, &l.DurationMs, &l.CacheHit, &l.CacheMiss)
 		l.Timestamp = ts
 		result = append(result, l)
 	}
@@ -323,30 +358,30 @@ func dbClearLogs() {
 // cleanupOldLogs 定时清理30天前的日志
 func cleanupOldLogs() {
 	for {
+		if db != nil {
+			cutoff := time.Now().AddDate(0, 0, -30)
+			if _, err := db.Exec("DELETE FROM usage_logs WHERE timestamp < ?", cutoff); err != nil {
+				log.Printf("sqlite cleanup error: %v", err)
+			}
+			if _, err := db.Exec("DELETE FROM error_logs WHERE timestamp < ?", cutoff); err != nil {
+				log.Printf("sqlite cleanup error_logs error: %v", err)
+			}
+		}
 		time.Sleep(1 * time.Hour)
-		if db == nil {
-			continue
-		}
-		cutoff := time.Now().AddDate(0, 0, -30)
-		_, err := db.Exec("DELETE FROM usage_logs WHERE timestamp < ?", cutoff)
-		if err != nil {
-			log.Printf("sqlite cleanup error: %v", err)
-		}
-		_, err = db.Exec("DELETE FROM error_logs WHERE timestamp < ?", cutoff)
-		if err != nil {
-			log.Printf("sqlite cleanup error_logs error: %v", err)
-		}
 	}
 }
 
 func emptyStats() map[string]any {
 	return map[string]any{
-		"totalInput":  0,
-		"totalOutput": 0,
-		"totalTokens": 0,
-		"totalReqs":   0,
-		"byProvider":  map[string]map[string]int64{},
-		"byModel":     map[string]map[string]int64{},
-		"byDate":      map[string]map[string]int64{},
+		"totalInput":     0,
+		"totalOutput":    0,
+		"totalTokens":    0,
+		"totalReqs":      0,
+		"avgTTFTMs":      float64(0),
+		"avgOutputSpeed": float64(0),
+		"cacheHitRate":   float64(-1),
+		"byProvider":     map[string]map[string]int64{},
+		"byModel":        map[string]map[string]int64{},
+		"byDate":         map[string]map[string]int64{},
 	}
 }

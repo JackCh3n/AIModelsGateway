@@ -103,9 +103,17 @@ func anthropicToOpenAIReq(body []byte) (map[string]any, error) {
 						}
 						toolCalls = append(toolCalls, tc)
 					case "tool_result":
+						// Anthropic 的 tool_result content 可为字符串或块数组；
+						// OpenAI 的 tool 消息 content 必须是字符串，数组需提取文本拼接
+						content := b["content"]
+						if arr, ok := content.([]any); ok {
+							if s := extractStringContent(arr); s != "" {
+								content = s
+							}
+						}
 						tr := map[string]any{
 							"role":         "tool",
-							"content":      b["content"],
+							"content":      content,
 							"tool_call_id": b["tool_use_id"],
 						}
 						toolResults = append(toolResults, tr)
@@ -641,4 +649,44 @@ func extractUsage(resp map[string]any, format string) (input, output int) {
 		}
 	}
 	return
+}
+
+// extractCacheFromUsage 从 usage 对象提取缓存命中/未命中的输入 token，兼容三种格式：
+//   - DeepSeek/部分中转站: prompt_cache_hit_tokens / prompt_cache_miss_tokens
+//   - Anthropic: cache_read_input_tokens（命中）/ cache_creation_input_tokens（未命中）
+//   - OpenAI 新版: prompt_tokens_details.cached_tokens（命中，缺失部分按 prompt_tokens 推算）
+func extractCacheFromUsage(u map[string]any) (hit, miss int) {
+	if u == nil {
+		return 0, 0
+	}
+	if v, ok := u["prompt_cache_hit_tokens"].(float64); ok {
+		hit = int(v)
+	}
+	if v, ok := u["prompt_cache_miss_tokens"].(float64); ok {
+		miss = int(v)
+	}
+	if v, ok := u["cache_read_input_tokens"].(float64); ok {
+		hit = int(v)
+	}
+	if v, ok := u["cache_creation_input_tokens"].(float64); ok {
+		miss = int(v)
+	}
+	if d, ok := u["prompt_tokens_details"].(map[string]any); ok {
+		if v, ok := d["cached_tokens"].(float64); ok {
+			hit = int(v)
+			if pt, ok := u["prompt_tokens"].(float64); ok {
+				miss = int(pt) - int(v)
+				if miss < 0 {
+					miss = 0
+				}
+			}
+		}
+	}
+	return hit, miss
+}
+
+// extractCacheUsage 从响应体中提取缓存指标（format 为上游协议格式）
+func extractCacheUsage(resp map[string]any, format string) (hit, miss int) {
+	u, _ := resp["usage"].(map[string]any)
+	return extractCacheFromUsage(u)
 }

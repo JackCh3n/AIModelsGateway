@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"log"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -123,12 +124,7 @@ func cleanReasoningCacheLocked() {
 		for id, e := range reasoningCache.entries {
 			all = append(all, kv{id, e.createdAt})
 		}
-		// 简单按时间排序（插入排序够用，因为只是兜底场景）
-		for i := 1; i < len(all); i++ {
-			for j := i; j > 0 && all[j].ts.Before(all[j-1].ts); j-- {
-				all[j], all[j-1] = all[j-1], all[j]
-			}
-		}
+		sort.Slice(all, func(i, j int) bool { return all[i].ts.Before(all[j].ts) })
 		// 保留最新的 reasoningCacheCleanSize 条
 		remove := len(all) - reasoningCacheCleanSize
 		for i := 0; i < remove && i < len(all); i++ {

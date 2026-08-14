@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"syscall"
 	"time"
@@ -15,6 +16,15 @@ import (
 
 // Version 版本号，编译时通过 ldflags 注入
 var Version = "dev"
+
+// exeDir 返回可执行文件所在目录（与数据目录解析逻辑保持一致）
+func exeDir() string {
+	exe, err := os.Executable()
+	if err != nil {
+		return "."
+	}
+	return filepath.Dir(exe)
+}
 
 func corsHandler(h http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -47,6 +57,10 @@ func startServer(port int) error {
 
 	mux := http.NewServeMux()
 
+	// 管理后台登录/登出（无需鉴权，登录接口本身校验密码）
+	mux.HandleFunc("/admin/api/login", corsHandler(adminLoginHandler))
+	mux.HandleFunc("/admin/api/logout", corsHandler(adminLogoutHandler))
+
 	// 健康检查
 	mux.HandleFunc("/health", corsHandler(func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]any{
@@ -58,8 +72,10 @@ func startServer(port int) error {
 	// 管理后台
 	registerAdminRoutes(mux)
 
-	// 静态文件服务（Chart.js 等）
-	mux.Handle("/static/", http.StripPrefix("/static/", http.FileServer(http.Dir("static"))))
+	// 静态文件服务（Chart.js 等）：路径基于可执行文件目录解析，
+	// 避免从其他工作目录启动时静态资源 404
+	staticDir := filepath.Join(exeDir(), "static")
+	mux.Handle("/static/", http.StripPrefix("/static/", http.FileServer(http.Dir(staticDir))))
 
 	// API Key 鉴权中间件
 	// allowMethods: 允许的 HTTP 方法（默认 POST）
@@ -145,7 +161,7 @@ func startServer(port int) error {
 				models = append(models, map[string]any{
 					"id":       m,
 					"object":   "model",
-					"created":  time.Now().UnixMilli(),
+					"created":  time.Now().Unix(), // OpenAI 规范为 Unix 秒
 					"owned_by": provider.Name,
 				})
 			}
@@ -156,7 +172,7 @@ func startServer(port int) error {
 				models = append(models, map[string]any{
 					"id":       m,
 					"object":   "model",
-					"created":  time.Now().UnixMilli(),
+					"created":  time.Now().Unix(),
 					"owned_by": "aimodels",
 				})
 			}
@@ -193,7 +209,7 @@ func startServer(port int) error {
 
 	server := &http.Server{
 		Addr:              addr,
-		Handler:           mux,
+		Handler:           adminAuth(mux), // 管理后台 API 可选登录保护
 		ReadHeaderTimeout: 10 * time.Second, // 防止 slowloris 攻击
 		ReadTimeout:       30 * time.Second,
 		WriteTimeout:      5 * time.Minute,  // 兼容流式响应

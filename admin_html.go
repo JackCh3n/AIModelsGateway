@@ -136,6 +136,7 @@ tr:hover{background:var(--hover)}
 </div>
 </div>
 <div class="header-right">
+<button class="btn btn-outline" id="logoutBtn" onclick="logoutAdmin()" style="display:none">退出登录</button>
 <button class="theme-toggle" onclick="toggleTheme()" id="themeBtn" title="切换主题">🌙</button>
 </div>
 </div>
@@ -258,6 +259,14 @@ tr:hover{background:var(--hover)}
 <div class="form-group" style="margin-bottom:16px">
 <label>主备路由单节点请求超时（秒，默认 60）：单站点请求超过该时间无响应时，自动顺延到下一个站点/模型</label>
 <input class="input" id="failoverTimeoutInput" type="number" min="1" placeholder="60">
+</div>
+<div class="form-group" style="margin-bottom:16px">
+<label>管理员密码（可选）：设置后访问管理后台需登录，防止局域网内他人读取/修改配置</label>
+<div style="display:flex;gap:8px;align-items:center">
+<input class="input" id="adminPasswordInput" type="password" placeholder="留空保持当前密码不变；输入新密码则更新" style="flex:1" oninput="if(this.value)clearAdminPwdPending=false">
+<button class="btn btn-outline" id="clearAdminPwdBtn" onclick="clearAdminPassword()" style="display:none">关闭登录保护</button>
+</div>
+<div id="adminPwdStatus" style="font-size:12px;color:var(--muted);margin-top:4px"></div>
 </div>
 <div class="form-row">
 <div class="form-group">
@@ -421,7 +430,7 @@ tr:hover{background:var(--hover)}
 <button class="btn btn-outline btn-sm" onclick="batchSetKeys('disabled')">⏸️ 禁用</button>
 <button class="btn btn-outline btn-sm" onclick="batchDeleteKeys()">🗑 批量删除</button>
 <button class="btn btn-outline btn-sm" onclick="testAllProvKeys()">⚡ 一键检测</button>
-<button class="btn btn-outline btn-sm" onclick="decodeProvKeyInput()" title="将输入框中的 Base64 内容解码为 Key">🔓 Base64编码</button>
+<button class="btn btn-outline btn-sm" onclick="decodeProvKeyInput()" title="将输入框中的 Base64 内容解码为 Key">🔓 Base64解码</button>
 <button class="btn btn-outline btn-sm" onclick="clearProvKeys()">🗑 清空Keys</button>
 <button class="btn btn-outline btn-sm" onclick="addProvKey()">添加</button>
 </div>
@@ -622,6 +631,21 @@ tr:hover{background:var(--hover)}
 </div>
 </div>
 
+<!-- 管理后台登录 Modal -->
+<div class="modal-overlay" id="loginModal">
+<div class="modal" style="width:380px">
+<div class="modal-title">🔒 管理后台登录</div>
+<p style="color:var(--muted);font-size:13px;margin-bottom:16px">已启用登录保护，请输入管理员密码：</p>
+<div class="form-group">
+<input class="input" id="loginPassword" type="password" placeholder="管理员密码" onkeydown="if(event.key==='Enter')submitLogin()" style="font-size:16px">
+</div>
+<div class="modal-actions">
+<button class="btn btn-outline" onclick="location.reload()">取消</button>
+<button class="btn btn-primary" onclick="submitLogin()">登录</button>
+</div>
+</div>
+</div>
+
 <div id="toast" style="display:none"></div>
 
 <script>
@@ -632,6 +656,59 @@ let editingKeys=[];
 let allProvidersCache=[];
 let inputPresets=['32K','64K','128K','256K','384K','512K','1M'];
 let outputPresets=['8K','16K','32K','64K','128K','256K','384K'];
+let adminLoginShown=false;
+let clearAdminPwdPending=false;
+
+// --- 管理后台登录保护 ---
+// 拦截 /admin/api/* 的 401 响应，弹出登录框（登录接口本身与网关接口不拦截）
+const _origFetch=window.fetch;
+window.fetch=async function(...args){
+const res=await _origFetch.apply(this,args);
+try{
+const url=String(args[0]||'');
+if(res.status===401&&url.indexOf(API)===0&&url.indexOf('/admin/api/login')===-1){
+showLoginModal();
+}
+}catch(e){}
+return res;
+};
+function showLoginModal(){
+if(adminLoginShown)return;
+adminLoginShown=true;
+document.getElementById('loginModal').classList.add('show');
+setTimeout(()=>{const el=document.getElementById('loginPassword');if(el)el.focus();},50);
+}
+async function submitLogin(){
+const pwd=document.getElementById('loginPassword').value;
+if(!pwd){toast('请输入密码','error');return;}
+try{
+const res=await fetch(API+'/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({password:pwd})});
+const data=await res.json();
+if(data&&data.ok){
+closeModal('loginModal');
+adminLoginShown=false;
+document.getElementById('loginPassword').value='';
+location.reload(); // 重新加载数据
+}else{
+toast((data&&data.error)||'登录失败','error');
+}
+}catch(e){
+toast('登录失败: '+e.message,'error');
+}
+}
+async function logoutAdmin(){
+try{
+await fetch(API+'/logout',{method:'POST'});
+}catch(e){}
+location.reload();
+}
+function clearAdminPassword(){
+if(!confirm('确定关闭管理后台登录保护？此后任何能访问该端口的人均可查看/修改配置。'))return;
+clearAdminPwdPending=true;
+document.getElementById('adminPasswordInput').value='';
+document.getElementById('clearAdminPwdBtn').style.display='none';
+document.getElementById('adminPwdStatus').textContent='将在保存后关闭登录保护';
+}
 
 // --- 主题切换 ---
 function initTheme(){
@@ -768,10 +845,20 @@ aiDiv.innerHTML='<div class="role">错误</div>HTTP '+res.status+': '+esc(errTex
 chatHistory.pop();
 return;
 }
+let fullContent='';
+// 网关对 stream:true 返回 SSE；错误/异常时为 JSON。按 Content-Type 分流，
+// 避免对已消费的流再调用 res.json() 抛 "Body is unusable"
+const ct=res.headers.get('content-type')||'';
+if(!ct.includes('text/event-stream')){
+const json=await res.json();
+if(json.choices&&json.choices[0]&&json.choices[0].message&&json.choices[0].message.content){
+fullContent=json.choices[0].message.content;
+}
+aiDiv.innerHTML='<div class="role">AI</div>'+esc(fullContent||'(空回复)');
+}else{
 // 流式读取
 const reader=res.body.getReader();
 const decoder=new TextDecoder();
-let fullContent='';
 let buffer='';
 while(true){
 const{done,value}=await reader.read();
@@ -795,12 +882,8 @@ document.getElementById('chatMessages').scrollTop=document.getElementById('chatM
 }
 }
 if(!fullContent){
-// 非流式响应
-const json=await res.json();
-if(json.choices&&json.choices[0]&&json.choices[0].message&&json.choices[0].message.content){
-fullContent=json.choices[0].message.content;
+aiDiv.innerHTML='<div class="role">AI</div>'+esc('(空回复)');
 }
-aiDiv.innerHTML='<div class="role">AI</div>'+esc(fullContent||'(空回复)');
 }
 chatHistory.push({role:'assistant',content:fullContent});
 }catch(e){
@@ -1874,8 +1957,28 @@ toast('导入失败: '+(err.error||''),'error');
 
 // --- URL 一键复制 ---
 async function copyText(text,btn){
+let ok=false;
+// 剪贴板 API 需要安全上下文（https/localhost），局域网 http 访问时降级到 execCommand
 try{
+if(navigator.clipboard&&window.isSecureContext){
 await navigator.clipboard.writeText(text);
+ok=true;
+}
+}catch(e){ok=false;}
+if(!ok){
+try{
+const ta=document.createElement('textarea');
+ta.value=text;
+ta.style.position='fixed';
+ta.style.opacity='0';
+document.body.appendChild(ta);
+ta.focus();
+ta.select();
+ok=document.execCommand('copy');
+document.body.removeChild(ta);
+}catch(e){ok=false;}
+}
+if(ok){
 if(btn){
 btn.classList.add('copied');
 const old=btn.innerHTML;
@@ -1883,7 +1986,7 @@ btn.innerHTML='✓ 已复制';
 setTimeout(()=>{btn.classList.remove('copied');btn.innerHTML=old;},1500);
 }
 toast('已复制到剪贴板','success');
-}catch(e){
+}else{
 toast('复制失败','error');
 }
 }
@@ -2059,7 +2162,7 @@ box.innerHTML='<div class="empty" style="padding:12px">暂无站点，点击下�
 return;
 }
 failoverEntriesDraft.forEach((e,idx)=>{
-const order=e.order||(idx+1);
+const order=idx+1; // 徽章显示当前位置而非可能过期的 e.order
 const row=document.createElement('div');
 row.style.cssText='display:flex;gap:8px;align-items:center;border:1px solid var(--border);border-radius:6px;padding:8px;background:var(--bg)';
 const badge=document.createElement('span');
@@ -2231,8 +2334,7 @@ if(res.ok){toast('已删除','success');loadKeys();}
 }
 
 function copyKey(key){
-navigator.clipboard.writeText(key);
-toast('已复制到剪贴板','success');
+copyText(key); // 复用带降级的 copyText
 }
 
 // --- Stats ---
@@ -2255,11 +2357,11 @@ statsCurrentPage=page;
 const lRes=await fetch(API+'/logs?page='+page+'&pageSize='+statsPageSize);
 const data=await lRes.json();
 const logs=data.logs||[];
-let lg='<table><tr><th>时间</th><th>站点</th><th>模型</th><th>格式</th><th>输入</th><th>输出</th></tr>';
+let lg='<table><tr><th>时间</th><th>站点</th><th>模型</th><th>格式</th><th>输入</th><th>输出</th><th>首Token</th><th>耗时</th></tr>';
 for(const l of logs){
-lg+='<tr><td>'+fmtDate(l.timestamp)+'</td><td>'+esc(l.providerName)+'</td><td class="mono">'+esc(l.model)+'</td><td>'+l.clientFormat+'</td><td>'+l.inputTokens+'</td><td>'+l.outputTokens+'</td></tr>';
+lg+='<tr><td>'+fmtDate(l.timestamp)+'</td><td>'+esc(l.providerName)+'</td><td class="mono">'+esc(l.model)+'</td><td>'+l.clientFormat+'</td><td>'+l.inputTokens+'</td><td>'+l.outputTokens+'</td><td>'+fmtTTFT(l.ttftMs)+'</td><td>'+fmtTTFT(l.durationMs)+'</td></tr>';
 }
-if(logs.length===0)lg+='<tr><td colspan="6" class="empty">暂无日志</td></tr>';
+if(logs.length===0)lg+='<tr><td colspan="8" class="empty">暂无日志</td></tr>';
 lg+='</table>';
 document.getElementById('recentLogs').innerHTML=lg;
 // 分页
@@ -2316,7 +2418,24 @@ statCard((stats.totalTokens||0).toLocaleString(),'Token 总量')+
 statCard(td.count||0,'今日请求数')+
 statCard((td.input||0).toLocaleString(),'今日输入 Token')+
 statCard((td.output||0).toLocaleString(),'今日输出 Token')+
-statCard((td.total||0).toLocaleString(),'今日 Token 总量');
+statCard((td.total||0).toLocaleString(),'今日 Token 总量')+
+statCard(fmtTTFT(stats.avgTTFTMs),'平均首 Token 延迟')+
+statCard(fmtSpeed(stats.avgOutputSpeed),'平均输出速度')+
+statCard(fmtPct(stats.cacheHitRate),'缓存命中率');
+}
+
+function fmtTTFT(ms){
+if(ms==null||ms===0)return'—';
+if(ms<1000)return Math.round(ms)+'ms';
+return (ms/1000).toFixed(1)+'s';
+}
+function fmtSpeed(s){
+if(s==null||s===0)return'—';
+return Math.round(s)+' tok/s';
+}
+function fmtPct(r){
+if(r==null||r<0)return'—';
+return (r*100).toFixed(0)+'%';
 }
 
 function renderStatsByProvider(stats){
@@ -2408,9 +2527,11 @@ chartProviderInst=new Chart(ctxProv,{type:'bar',data:{labels:provLabels,datasets
 const modelLabels=Object.keys(modelData);
 const modelTokens=modelLabels.map(m=>modelData[m].total||0);
 const modelColors=['#3b82f6','#10b981','#f59e0b','#ef4444','#8b5cf6','#ec4899','#06b6d4','#84cc16','#f97316','#6366f1'];
+// 模型超过色板数量时循环取色，避免图表缺色
+const modelBg=modelLabels.map((_,i)=>modelColors[i%modelColors.length]);
 if(chartModelInst)chartModelInst.destroy();
 const ctxModel=document.getElementById('chartModel').getContext('2d');
-chartModelInst=new Chart(ctxModel,{type:'doughnut',data:{labels:modelLabels,datasets:[{data:modelTokens,backgroundColor:modelColors.slice(0,modelLabels.length)}]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{position:'right'}}}});
+chartModelInst=new Chart(ctxModel,{type:'doughnut',data:{labels:modelLabels,datasets:[{data:modelTokens,backgroundColor:modelBg}]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{position:'right'}}}});
 }
 
 // --- Settings ---
@@ -2430,6 +2551,38 @@ document.getElementById('redisAddrInput').value=data.redisAddr||'';
 document.getElementById('redisPasswordInput').value=data.redisPassword||'';
 document.getElementById('redisDBInput').value=data.redisDb||0;
 updateRageStatus(!!data.rageMode);
+// 管理员密码状态
+document.getElementById('adminPasswordInput').value='';
+const pwdStatus=document.getElementById('adminPwdStatus');
+const clearBtn=document.getElementById('clearAdminPwdBtn');
+const logoutBtn=document.getElementById('logoutBtn');
+if(data.hasAdminPassword){
+pwdStatus.textContent='已启用登录保护（输入新密码可修改）';
+clearBtn.style.display='';
+if(logoutBtn)logoutBtn.style.display='';
+}else{
+pwdStatus.textContent='未启用登录保护';
+clearBtn.style.display='none';
+if(logoutBtn)logoutBtn.style.display='none';
+}
+}
+
+// 组装完整设置对象：两个保存按钮都必须携带全量字段，
+// 避免互相覆盖（如保存通用设置时误关狂暴模式/清空 Redis/UserAgent 配置）
+function collectSettings(){
+return {
+activeProviderId:activeProviderId,
+inputPresets:inputPresets,
+outputPresets:outputPresets,
+userAgent:document.getElementById('globalUserAgentInput').value.trim(),
+failoverTimeout:parseInt(document.getElementById('failoverTimeoutInput').value)||60,
+rageMode:document.getElementById('rageModeToggle').checked,
+redisAddr:document.getElementById('redisAddrInput').value.trim(),
+redisPassword:document.getElementById('redisPasswordInput').value,
+redisDb:parseInt(document.getElementById('redisDBInput').value)||0,
+// 显式清空密码时传空串，否则仅在新密码非空时携带该字段
+adminPassword:clearAdminPwdPending?'':(document.getElementById('adminPasswordInput').value||undefined)
+};
 }
 
 function updateRageStatus(enabled){
@@ -2443,24 +2596,18 @@ el.textContent='未启用';
 }
 }
 
-// 保存狂暴模式配置
+// 保存狂暴模式配置（携带完整设置，避免覆盖其他字段）
 async function saveRageMode(){
-const body={
-activeProviderId:activeProviderId,
-inputPresets:inputPresets,
-outputPresets:outputPresets,
-rageMode:document.getElementById('rageModeToggle').checked,
-redisAddr:document.getElementById('redisAddrInput').value.trim(),
-redisPassword:document.getElementById('redisPasswordInput').value,
-redisDb:parseInt(document.getElementById('redisDBInput').value)||0
-};
-const res=await fetch(API+'/settings',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+const res=await fetch(API+'/settings',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(collectSettings())});
 if(res.ok){
+clearAdminPwdPending=false;
 const data=await res.json();
-updateRageStatus(data.rageMode);
+updateRageStatus(!!data.rageMode);
 toast(data.rageMode?'狂暴模式已启用，Redis 连接中...':'狂暴模式已关闭','success');
+loadSettings();
 }else{
-toast('保存失败','error');
+const err=await res.json().catch(()=>({}));
+toast(err.error||'保存失败','error');
 }
 }
 
@@ -2604,10 +2751,14 @@ const ipVal=document.getElementById('inputPresetInput').value.trim();
 if(ipVal&&!inputPresets.includes(ipVal))inputPresets.push(ipVal);
 const opVal=document.getElementById('outputPresetInput').value.trim();
 if(opVal&&!outputPresets.includes(opVal))outputPresets.push(opVal);
-const failoverTimeout=parseInt(document.getElementById('failoverTimeoutInput').value)||60;
-const res=await fetch(API+'/settings',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({activeProviderId:activeProviderId,inputPresets:inputPresets,outputPresets:outputPresets,userAgent:document.getElementById('globalUserAgentInput').value.trim(),failoverTimeout:failoverTimeout})});
+const res=await fetch(API+'/settings',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(collectSettings())});
 if(res.ok){
+clearAdminPwdPending=false;
 toast('已保存','success');
+loadSettings(); // 刷新密码状态等
+}else{
+const err=await res.json().catch(()=>({}));
+toast(err.error||'保存失败','error');
 }
 }
 
@@ -2723,8 +2874,8 @@ toast('删除失败','error');
 
 // --- Config ---
 function loadConfig(){
-const port=location.port||'3458';
-const base='http://'+location.hostname+':'+port;
+// 使用当前页面 origin（含协议与实际端口），避免 http/https、非 3458 端口下显示错误的接入地址
+const base=location.origin;
 document.getElementById('cfgOpenAIUrl').textContent=base+'/v1';
 document.getElementById('cfgAnthropicUrl').textContent=base;
 document.getElementById('cfgHealthUrl').textContent=base+'/health';

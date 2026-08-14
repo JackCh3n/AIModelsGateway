@@ -109,3 +109,89 @@ func TestLimitToTokens(t *testing.T) {
 		}
 	}
 }
+
+// 测试 tool_result content 为块数组时转换为 OpenAI 字符串
+func TestAnthropicToOpenAIToolResultArrayContent(t *testing.T) {
+	body := `{
+		"model": "claude-3-5",
+		"max_tokens": 100,
+		"messages": [{
+			"role": "user",
+			"content": [
+				{"type": "tool_result", "tool_use_id": "toolu_1", "content": [
+					{"type": "text", "text": "result-part-1"},
+					{"type": "text", "text": "result-part-2"}
+				]}
+			]
+		}]
+	}`
+	out, err := anthropicToOpenAIReq([]byte(body))
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	msgs, _ := out["messages"].([]any)
+	if len(msgs) != 1 {
+		t.Fatalf("expected 1 tool message, got %d", len(msgs))
+	}
+	m := msgs[0].(map[string]any)
+	content, ok := m["content"].(string)
+	if !ok {
+		t.Fatalf("tool message content should be string, got %T", m["content"])
+	}
+	if content != "result-part-1\nresult-part-2" {
+		t.Errorf("content = %q, want %q", content, "result-part-1\nresult-part-2")
+	}
+}
+
+// 测试别名与主备路由重名冲突检测
+func TestAliasNameConflict(t *testing.T) {
+	if !isAliasNameConflict("", "") {
+		t.Error("empty name should conflict")
+	}
+	// 不冲突：与现有别名/主备路由都不同
+	if isAliasNameConflict("fresh-name-xyz", "") {
+		t.Error("fresh name should not conflict")
+	}
+}
+
+// 测试 limitToTokens 的大小写与空格容错
+func TestLimitToTokensCase(t *testing.T) {
+	if got := limitToTokens(" 64k "); got != 64000 {
+		t.Errorf("limitToTokens(64k) = %d, want 64000", got)
+	}
+}
+
+// 测试缓存指标提取（三种上游格式）
+func TestExtractCacheFromUsage(t *testing.T) {
+	// DeepSeek 风格
+	hit, miss := extractCacheFromUsage(map[string]any{
+		"prompt_cache_hit_tokens":  float64(100),
+		"prompt_cache_miss_tokens": float64(50),
+	})
+	if hit != 100 || miss != 50 {
+		t.Errorf("deepseek style: hit=%d miss=%d, want 100/50", hit, miss)
+	}
+	// Anthropic 风格
+	hit, miss = extractCacheFromUsage(map[string]any{
+		"cache_read_input_tokens":     float64(200),
+		"cache_creation_input_tokens": float64(80),
+	})
+	if hit != 200 || miss != 80 {
+		t.Errorf("anthropic style: hit=%d miss=%d, want 200/80", hit, miss)
+	}
+	// OpenAI 新版风格
+	hit, miss = extractCacheFromUsage(map[string]any{
+		"prompt_tokens": float64(300),
+		"prompt_tokens_details": map[string]any{
+			"cached_tokens": float64(120),
+		},
+	})
+	if hit != 120 || miss != 180 {
+		t.Errorf("openai style: hit=%d miss=%d, want 120/180", hit, miss)
+	}
+	// 无缓存数据
+	hit, miss = extractCacheFromUsage(map[string]any{"prompt_tokens": float64(10)})
+	if hit != 0 || miss != 0 {
+		t.Errorf("no cache: hit=%d miss=%d, want 0/0", hit, miss)
+	}
+}

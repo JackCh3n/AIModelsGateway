@@ -61,6 +61,11 @@ type UsageLog struct {
 	TotalTokens  int       `json:"totalTokens"`
 	Timestamp    time.Time `json:"timestamp"`
 	ClientFormat string    `json:"clientFormat"` // openai 或 anthropic
+	// 性能指标（用于用量统计页展示）
+	TTFTMs     int `json:"ttftMs"`     // 首 token 延迟（毫秒）：流式=首个 chunk，非流式=响应到达
+	DurationMs int `json:"durationMs"` // 请求总耗时（毫秒）
+	CacheHit   int `json:"cacheHit"`   // 缓存命中的输入 token
+	CacheMiss  int `json:"cacheMiss"`  // 未命中的输入 token
 }
 
 // ErrorLog 上游请求错误记录（用于后台查看失败明细）
@@ -91,6 +96,8 @@ type Settings struct {
 	RedisAddr     string `json:"redisAddr"`     // Redis 地址，如 127.0.0.1:6379
 	RedisPassword string `json:"redisPassword"` // Redis 密码
 	RedisDB       int    `json:"redisDb"`       // Redis DB 编号
+	// AdminPasswordHash 管理后台登录密码的 SHA-256 十六进制摘要（可选，为空则不启用登录保护）
+	AdminPasswordHash string `json:"adminPasswordHash,omitempty"`
 }
 
 // ModelAlias 模型路由别名

@@ -11,6 +11,7 @@ import (
 	"log"
 	"net/http"
 	"net/url"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -38,8 +39,11 @@ const (
 	rageMaxIdlePerHost   = 5000  // 狂暴模式：单 host 最大空闲连接（支持万级并发到同一上游）
 )
 
+// httpClient 全局 HTTP 客户端。
+// 注意：不设置 Client.Timeout —— 它覆盖整个请求生命周期（含响应体读取），
+// 会掐断长流式响应；改为依赖 Transport 的 ResponseHeaderTimeout（等响应头超时）
+// 与上下文超时（非流式主备路由），流式响应可持续任意时长。
 var httpClient = &http.Client{
-	Timeout:   5 * time.Minute,
 	Transport: newTransport(normalMaxIdle, normalMaxIdlePerHost),
 }
 
@@ -93,7 +97,6 @@ func getHTTPClient(p *Provider) *http.Client {
 		}
 	}
 	c := &http.Client{
-		Timeout:   5 * time.Minute,
 		Transport: transport,
 	}
 	proxyClients.m[cacheKey] = c
@@ -173,6 +176,9 @@ func proxyRequest(w http.ResponseWriter, r *http.Request, clientFormat string, p
 // 返回 handled=false 表示该站点调用失败且错误未写入响应（可顺延到备用站点）；
 // handled=true 表示响应已写入（成功或已返回错误给客户端）。
 func forwardToProvider(w http.ResponseWriter, r *http.Request, clientFormat string, provider *Provider, model string, body []byte, params map[string]any, isStream bool, maxRetries int, timeout time.Duration) (handled bool) {
+	// 本地副本：绝不修改调用方共享的 params（主备路由多个站点串行调用同一 map，
+	// 且并发请求各自独立；拷贝可彻底杜绝任何跨调用/跨条目状态泄漏）
+	params = cloneMap(params)
 	// 模型为空或 "all" 时，使用站点的默认模型
 	if model == "" || model == "all" {
 		if provider.DefaultModel != "" {
@@ -266,6 +272,7 @@ func forwardToProvider(w http.ResponseWriter, r *http.Request, clientFormat stri
 	var resp *http.Response
 	var lastStatus int
 	var lastBody []byte
+	var attemptStart time.Time // 性能指标：成功那次请求的发出时刻
 	// 函数级 cancelHeader：defer 在函数返回（body 读取完毕）后才执行，
 	// 避免提前取消 context 导致 resp.Body 不可读。
 	// 流式请求不设 context 超时（依赖 Transport.ResponseHeaderTimeout），
@@ -309,6 +316,7 @@ func forwardToProvider(w http.ResponseWriter, r *http.Request, clientFormat stri
 			req.Header.Set("User-Agent", ua)
 		}
 
+		attemptStart = time.Now() // 性能指标：请求发出时刻（成功的那次）
 		resp, err = getHTTPClient(provider).Do(req)
 		if err != nil {
 			log.Printf("  [%s] upstream network error: %v", provider.Name, err)
@@ -323,6 +331,14 @@ func forwardToProvider(w http.ResponseWriter, r *http.Request, clientFormat stri
 				Message:      truncate(err.Error(), 500),
 				APIKey:       apiKey,
 			})
+			// 客户端已断开：不再重试也不再顺延，直接结束（响应已无意义）
+			if r.Context().Err() != nil {
+				if cancelHeader != nil {
+					cancelHeader()
+					cancelHeader = nil
+				}
+				return true
+			}
 			// 单节点超时（含 context 超时和 Transport ResponseHeaderTimeout）
 			// 不再重试，直接返回 false 让主备路由顺延
 			if timeout > 0 && (errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled)) {
@@ -412,10 +428,12 @@ func forwardToProvider(w http.ResponseWriter, r *http.Request, clientFormat stri
 		defer resp.Body.Close()
 	}
 
+	// 性能指标：t.start 已在成功那次 Do 前记录；此处记录首个响应字节到达
+	t := &reqTiming{start: attemptStart, firstTok: time.Now()}
 	if isStream {
-		handleStreamProxy(w, resp, clientFormat, provider.Format, provider, model)
+		handleStreamProxy(w, resp, clientFormat, provider.Format, provider, model, t)
 	} else {
-		handleNonStreamProxy(w, resp, clientFormat, provider.Format, provider, model)
+		handleNonStreamProxy(w, resp, clientFormat, provider.Format, provider, model, t)
 	}
 	// body 读取已完成，清理 context 超时
 	if cancelHeader != nil {
@@ -423,6 +441,30 @@ func forwardToProvider(w http.ResponseWriter, r *http.Request, clientFormat stri
 		cancelHeader = nil
 	}
 	return true
+}
+
+// reqTiming 单次请求的性能测量点
+type reqTiming struct {
+	start    time.Time // 请求发出（成功那次 Do 之前）
+	firstTok time.Time // 首个响应字节到达（流式首 chunk / 非流式响应体）
+	end      time.Time // 处理完成
+}
+
+// fillTiming 将测量结果写入用量日志（TTFT 与总耗时）
+func (t *reqTiming) fillTiming(logEntry *UsageLog) {
+	if t == nil || t.start.IsZero() {
+		return
+	}
+	first := t.firstTok
+	if first.IsZero() || first.Before(t.start) {
+		first = t.start
+	}
+	end := t.end
+	if end.IsZero() || end.Before(first) {
+		end = first
+	}
+	logEntry.TTFTMs = int(first.Sub(t.start).Milliseconds())
+	logEntry.DurationMs = int(end.Sub(t.start).Milliseconds())
 }
 
 // maxFailoverEntries 主备路由最多支持的站点数
@@ -477,7 +519,7 @@ func proxyFailoverRequest(w http.ResponseWriter, r *http.Request, clientFormat s
 	writeError(w, clientFormat, http.StatusBadGateway, lastErr)
 }
 
-func handleNonStreamProxy(w http.ResponseWriter, resp *http.Response, clientFormat, providerFormat string, provider *Provider, model string) {
+func handleNonStreamProxy(w http.ResponseWriter, resp *http.Response, clientFormat, providerFormat string, provider *Provider, model string, t *reqTiming) {
 	var raw map[string]any
 	if err := json.NewDecoder(resp.Body).Decode(&raw); err != nil {
 		writeError(w, clientFormat, http.StatusInternalServerError, "decode response: "+err.Error())
@@ -514,12 +556,15 @@ func handleNonStreamProxy(w http.ResponseWriter, resp *http.Response, clientForm
 		input, output = extractUsage(out, clientFormat)
 	}
 	logEntry := newUsageLog(provider.ID, provider.Name, model, input, output, clientFormat)
+	t.end = time.Now()
+	t.fillTiming(&logEntry)
+	logEntry.CacheHit, logEntry.CacheMiss = extractCacheUsage(raw, providerFormat)
 	addUsageLog(logEntry)
 
 	writeJSON(w, http.StatusOK, out)
 }
 
-func handleStreamProxy(w http.ResponseWriter, resp *http.Response, clientFormat, providerFormat string, provider *Provider, model string) {
+func handleStreamProxy(w http.ResponseWriter, resp *http.Response, clientFormat, providerFormat string, provider *Provider, model string, t *reqTiming) {
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
 	w.Header().Set("Access-Control-Allow-Origin", "*")
@@ -536,6 +581,7 @@ func handleStreamProxy(w http.ResponseWriter, resp *http.Response, clientFormat,
 		w.WriteHeader(http.StatusOK)
 		reader := bufio.NewReader(resp.Body)
 		var totalInput, totalOutput int
+		var cacheHit, cacheMiss int
 		var reasoningBuf strings.Builder
 		var toolCallIDs []string
 		for {
@@ -563,6 +609,10 @@ func handleStreamProxy(w http.ResponseWriter, resp *http.Response, clientFormat,
 							if ct, ok := u["completion_tokens"].(float64); ok {
 								totalOutput = int(ct)
 							}
+							// 缓存指标（取最后一次完整 usage）
+							if h, m := extractCacheFromUsage(u); h > 0 || m > 0 {
+								cacheHit, cacheMiss = h, m
+							}
 						}
 						// Anthropic 流式用量
 						if obj["type"] == "message_start" {
@@ -570,6 +620,9 @@ func handleStreamProxy(w http.ResponseWriter, resp *http.Response, clientFormat,
 								if u, ok := msg["usage"].(map[string]any); ok {
 									if it, ok := u["input_tokens"].(float64); ok {
 										totalInput = int(it)
+									}
+									if h, m := extractCacheFromUsage(u); h > 0 || m > 0 {
+										cacheHit, cacheMiss = h, m
 									}
 								}
 							}
@@ -596,6 +649,9 @@ func handleStreamProxy(w http.ResponseWriter, resp *http.Response, clientFormat,
 		}
 		// 记录用量
 		logEntry := newUsageLog(provider.ID, provider.Name, model, totalInput, totalOutput, clientFormat)
+		t.end = time.Now()
+		t.fillTiming(&logEntry)
+		logEntry.CacheHit, logEntry.CacheMiss = cacheHit, cacheMiss
 		addUsageLog(logEntry)
 		return
 	}
@@ -604,7 +660,7 @@ func handleStreamProxy(w http.ResponseWriter, resp *http.Response, clientFormat,
 		// OpenAI SSE -> Anthropic SSE
 		w.Header().Set("Content-Type", "text/event-stream")
 		w.WriteHeader(http.StatusOK)
-		openAISSEToAnthropicSSE(w, flusher, resp.Body, provider, model)
+		openAISSEToAnthropicSSE(w, flusher, resp.Body, provider, model, t)
 		return
 	}
 
@@ -612,13 +668,13 @@ func handleStreamProxy(w http.ResponseWriter, resp *http.Response, clientFormat,
 		// Anthropic SSE -> OpenAI SSE
 		w.Header().Set("Content-Type", "text/event-stream")
 		w.WriteHeader(http.StatusOK)
-		anthropicSSEToOpenAISSE(w, flusher, resp.Body, provider, model)
+		anthropicSSEToOpenAISSE(w, flusher, resp.Body, provider, model, t)
 		return
 	}
 }
 
 // openAISSEToAnthropicSSE 将 OpenAI SSE 流转换为 Anthropic SSE 流
-func openAISSEToAnthropicSSE(w http.ResponseWriter, flusher http.Flusher, body io.Reader, provider *Provider, model string) {
+func openAISSEToAnthropicSSE(w http.ResponseWriter, flusher http.Flusher, body io.Reader, provider *Provider, model string, t *reqTiming) {
 	msgID := "msg_" + fmt.Sprintf("%x", time.Now().UnixMilli())
 	stopReason := "end_turn"
 
@@ -645,6 +701,7 @@ func openAISSEToAnthropicSSE(w http.ResponseWriter, flusher http.Flusher, body i
 	hasText := false
 	pendingTools := map[int]*streamToolAcc{}
 	var totalInput, totalOutput int
+	var cacheHit, cacheMiss int
 	var reasoningBuf strings.Builder
 	var toolCallIDs []string
 
@@ -698,6 +755,10 @@ func openAISSEToAnthropicSSE(w http.ResponseWriter, flusher http.Flusher, body i
 			}
 			if ct, ok := u["completion_tokens"].(float64); ok {
 				totalOutput = int(ct)
+			}
+			// 缓存指标（取最后一次完整 usage）
+			if h, m := extractCacheFromUsage(u); h > 0 || m > 0 {
+				cacheHit, cacheMiss = h, m
 			}
 		}
 
@@ -771,9 +832,8 @@ func openAISSEToAnthropicSSE(w http.ResponseWriter, flusher http.Flusher, body i
 						acc.args += args
 					}
 				}
-				if acc.id != "" && acc.name != "" && acc.args != "" && !acc.emitted {
-					emitToolBlock(acc)
-				}
+				// 注意：OpenAI 流式参数是分片增量，需等流结束后再一次性发出完整
+				// tool_use 块（下方循环结束后统一 emit），避免发送残缺的 JSON 参数
 			}
 		}
 
@@ -795,8 +855,14 @@ func openAISSEToAnthropicSSE(w http.ResponseWriter, flusher http.Flusher, body i
 		})
 	}
 
-	for _, acc := range pendingTools {
-		if !acc.emitted {
+	// 流结束后按 index 顺序统一发出 tool_use 块（map 遍历无序，需排序保证顺序）
+	idxs := make([]int, 0, len(pendingTools))
+	for k := range pendingTools {
+		idxs = append(idxs, k)
+	}
+	sort.Ints(idxs)
+	for _, k := range idxs {
+		if acc := pendingTools[k]; !acc.emitted {
 			emitToolBlock(acc)
 		}
 	}
@@ -820,14 +886,18 @@ func openAISSEToAnthropicSSE(w http.ResponseWriter, flusher http.Flusher, body i
 
 	// 记录用量
 	logEntry := newUsageLog(provider.ID, provider.Name, model, totalInput, totalOutput, "anthropic")
+	t.end = time.Now()
+	t.fillTiming(&logEntry)
+	logEntry.CacheHit, logEntry.CacheMiss = cacheHit, cacheMiss
 	addUsageLog(logEntry)
 }
 
 // anthropicSSEToOpenAISSE 将 Anthropic SSE 流转换为 OpenAI SSE 流
-func anthropicSSEToOpenAISSE(w http.ResponseWriter, flusher http.Flusher, body io.Reader, provider *Provider, model string) {
+func anthropicSSEToOpenAISSE(w http.ResponseWriter, flusher http.Flusher, body io.Reader, provider *Provider, model string, t *reqTiming) {
 	chatID := "chatcmpl-" + fmt.Sprintf("%x", time.Now().UnixMilli())
 	created := time.Now().Unix()
 	var totalInput, totalOutput int
+	var cacheHit, cacheMiss int
 	finishReason := "stop"
 
 	reader := bufio.NewReader(body)
@@ -864,6 +934,10 @@ func anthropicSSEToOpenAISSE(w http.ResponseWriter, flusher http.Flusher, body i
 				if u, ok := msg["usage"].(map[string]any); ok {
 					if it, ok := u["input_tokens"].(float64); ok {
 						totalInput = int(it)
+					}
+					// Anthropic 缓存指标在 message_start 的 usage 中
+					if h, m := extractCacheFromUsage(u); h > 0 || m > 0 {
+						cacheHit, cacheMiss = h, m
 					}
 				}
 			}
@@ -1004,6 +1078,9 @@ func anthropicSSEToOpenAISSE(w http.ResponseWriter, flusher http.Flusher, body i
 
 	// 记录用量
 	logEntry := newUsageLog(provider.ID, provider.Name, model, totalInput, totalOutput, "openai")
+	t.end = time.Now()
+	t.fillTiming(&logEntry)
+	logEntry.CacheHit, logEntry.CacheMiss = cacheHit, cacheMiss
 	addUsageLog(logEntry)
 }
 
@@ -1022,6 +1099,16 @@ func truncate(s string, n int) string {
 		return s
 	}
 	return s[:n] + "..."
+}
+
+// cloneMap 浅拷贝 map：仅拷贝顶层键，避免共享引用被调用方修改。
+// 请求参数只涉及顶层键（model/max_tokens/max_completion_tokens）的覆盖，浅拷贝足够。
+func cloneMap(m map[string]any) map[string]any {
+	out := make(map[string]any, len(m))
+	for k, v := range m {
+		out[k] = v
+	}
+	return out
 }
 
 func writeJSON(w http.ResponseWriter, status int, data any) {

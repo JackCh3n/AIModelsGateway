@@ -122,6 +122,10 @@ func registerAdminRoutes(mux *http.ServeMux) {
 			return
 		}
 		p := getProvider(providerID)
+		if p == nil {
+			writeJSON(w, http.StatusNotFound, map[string]string{"error": "provider not found"})
+			return
+		}
 		writeJSON(w, http.StatusOK, map[string]any{
 			"status":         "ok",
 			"providerId":     providerID,
@@ -309,15 +313,71 @@ func registerAdminRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/admin/api/settings", corsHandler(func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method {
 		case "GET":
-			writeJSON(w, http.StatusOK, getSettings())
+			s := getSettings()
+			hasPwd := s.AdminPasswordHash != ""
+			s.AdminPasswordHash = "" // 不回传密码摘要
+			// 序列化后附加 hasAdminPassword 字段，保持响应结构向后兼容
+			resp, _ := json.Marshal(s)
+			var m map[string]any
+			_ = json.Unmarshal(resp, &m)
+			m["hasAdminPassword"] = hasPwd
+			writeJSON(w, http.StatusOK, m)
 		case "PUT":
-			var s Settings
-			if err := json.NewDecoder(r.Body).Decode(&s); err != nil {
+			// 用指针字段区分「未提交」与「显式清空」，
+			// 避免部分字段缺失时覆盖掉已有的 RageMode/Redis/UserAgent 等配置
+			var body struct {
+				ActiveProviderID *string  `json:"activeProviderId"`
+				DefaultModel     *string  `json:"defaultModel"`
+				InputPresets     []string `json:"inputPresets"`
+				OutputPresets    []string `json:"outputPresets"`
+				UserAgent        *string  `json:"userAgent"`
+				FailoverTimeout  *int     `json:"failoverTimeout"`
+				RageMode         *bool    `json:"rageMode"`
+				RedisAddr        *string  `json:"redisAddr"`
+				RedisPassword    *string  `json:"redisPassword"`
+				RedisDB          *int     `json:"redisDb"`
+				AdminPassword    *string  `json:"adminPassword"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 				writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 				return
 			}
-			updateSettings(s)
-			writeJSON(w, http.StatusOK, s)
+			cur := getSettings()
+			merge := func(dst *string, src *string) {
+				if src != nil {
+					*dst = *src
+				}
+			}
+			merge(&cur.ActiveProviderID, body.ActiveProviderID)
+			merge(&cur.DefaultModel, body.DefaultModel)
+			if len(body.InputPresets) > 0 {
+				cur.InputPresets = body.InputPresets
+			}
+			if len(body.OutputPresets) > 0 {
+				cur.OutputPresets = body.OutputPresets
+			}
+			merge(&cur.UserAgent, body.UserAgent)
+			if body.FailoverTimeout != nil {
+				cur.FailoverTimeout = *body.FailoverTimeout
+			}
+			if body.RageMode != nil {
+				cur.RageMode = *body.RageMode
+			}
+			merge(&cur.RedisAddr, body.RedisAddr)
+			merge(&cur.RedisPassword, body.RedisPassword)
+			if body.RedisDB != nil {
+				cur.RedisDB = *body.RedisDB
+			}
+			if body.AdminPassword != nil {
+				cur.AdminPasswordHash = ""
+				if *body.AdminPassword != "" {
+					cur.AdminPasswordHash = hashAdminPassword(*body.AdminPassword)
+				}
+			}
+			updateSettings(cur)
+			resp := cur
+			resp.AdminPasswordHash = ""
+			writeJSON(w, http.StatusOK, resp)
 		default:
 			writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 		}
@@ -417,8 +477,12 @@ func registerAdminRoutes(mux *http.ServeMux) {
 				writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 				return
 			}
-			addAlias(a)
-			writeJSON(w, http.StatusOK, a)
+			created, err := addAlias(a)
+			if err != nil {
+				writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+				return
+			}
+			writeJSON(w, http.StatusOK, created)
 		default:
 			writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 		}
@@ -438,7 +502,12 @@ func registerAdminRoutes(mux *http.ServeMux) {
 				return
 			}
 			a.ID = id
-			if !updateAlias(a) {
+			updated, err := updateAlias(a)
+			if err != nil {
+				writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+				return
+			}
+			if !updated {
 				writeJSON(w, http.StatusNotFound, map[string]string{"error": "alias not found"})
 				return
 			}

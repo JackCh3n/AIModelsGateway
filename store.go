@@ -164,7 +164,8 @@ func mutateConfig(fn func(cfg *Config)) {
 	fn(&newCfg)
 	newCfg.idx = buildIndex(&newCfg) // fn 修改后重建索引
 	configPtr.Store(&newCfg)
-	go persistConfig(&newCfg)
+	// 同步持久化：管理操作低频，且避免多个异步 goroutine 乱序写盘导致配置丢失
+	persistConfig(&newCfg)
 }
 
 // shallowCopyConfig 深拷贝配置（管理操作低频，拷贝开销可忽略）
@@ -310,6 +311,28 @@ func deleteProvider(id string) bool {
 			if cfg.Settings.ActiveProviderID == id {
 				cfg.Settings.ActiveProviderID = ""
 			}
+			// 清理引用该站点的别名与主备路由条目，避免产生悬空引用
+			aliases := cfg.Aliases[:0]
+			for _, a := range cfg.Aliases {
+				if a.ProviderID != id {
+					aliases = append(aliases, a)
+				}
+			}
+			cfg.Aliases = aliases
+			failovers := cfg.Failovers[:0]
+			for _, f := range cfg.Failovers {
+				entries := f.Entries[:0]
+				for _, e := range f.Entries {
+					if e.ProviderID != id {
+						entries = append(entries, e)
+					}
+				}
+				f.Entries = entries
+				if len(f.Entries) > 0 { // 条目清空的路由一并删除
+					failovers = append(failovers, f)
+				}
+			}
+			cfg.Failovers = failovers
 			deleted = true
 		}
 	})
@@ -533,14 +556,27 @@ func listAliases() []ModelAlias {
 	return result
 }
 
-func addAlias(a ModelAlias) {
+func addAlias(a ModelAlias) (ModelAlias, error) {
+	if a.Name == "" {
+		return a, fmt.Errorf("路由名称不能为空")
+	}
+	if isAliasNameConflict(a.Name, "") {
+		return a, fmt.Errorf("路由名称「%s」与已有别名或主备路由重复，请换一个", a.Name)
+	}
 	a.ID = generateID("alias")
 	mutateConfig(func(cfg *Config) {
 		cfg.Aliases = append(cfg.Aliases, a)
 	})
+	return a, nil
 }
 
-func updateAlias(a ModelAlias) bool {
+func updateAlias(a ModelAlias) (bool, error) {
+	if a.Name == "" {
+		return false, fmt.Errorf("路由名称不能为空")
+	}
+	if isAliasNameConflict(a.Name, a.ID) {
+		return false, fmt.Errorf("路由名称「%s」与已有别名或主备路由重复，请换一个", a.Name)
+	}
 	updated := false
 	mutateConfig(func(cfg *Config) {
 		for i := range cfg.Aliases {
@@ -551,7 +587,7 @@ func updateAlias(a ModelAlias) bool {
 			}
 		}
 	})
-	return updated
+	return updated, nil
 }
 
 func deleteAlias(id string) bool {
@@ -594,6 +630,25 @@ func isModelNameConflict(name, excludeFailoverID string) bool {
 	}
 	for _, f := range cfg.Failovers {
 		if f.ID != excludeFailoverID && f.Name == name {
+			return true
+		}
+	}
+	return false
+}
+
+// isAliasNameConflict 检查别名名称是否与已有别名（排除自身）或主备路由冲突
+func isAliasNameConflict(name, excludeAliasID string) bool {
+	if name == "" {
+		return true
+	}
+	cfg := loadConfig()
+	for _, a := range cfg.Aliases {
+		if a.ID != excludeAliasID && a.Name == name {
+			return true
+		}
+	}
+	for _, f := range cfg.Failovers {
+		if f.Name == name {
 			return true
 		}
 	}
@@ -682,6 +737,15 @@ var usageLogCh = make(chan UsageLog, 20000)
 // errorLogCh 错误日志异步写入 channel，避免请求路径同步写库拖慢
 var errorLogCh = make(chan ErrorLog, 10000)
 
+// worker 停止信号：优雅关闭时先让 worker 刷掉自己手里的 batch，再 drain 剩余，
+// 避免 worker 与 flush 并发抢 channel 导致已取走但未落库的数据丢失
+var (
+	usageWorkerStop    = make(chan struct{})
+	usageWorkerStopOnce sync.Once
+	errorWorkerStop    = make(chan struct{})
+	errorWorkerStopOnce sync.Once
+)
+
 func init() {
 	go usageLogWorker()
 	go errorLogWorker()
@@ -708,6 +772,9 @@ func errorLogWorker() {
 			}
 		case <-ticker.C:
 			flush()
+		case <-errorWorkerStop:
+			flush() // 先刷掉已取走的 batch 再退出
+			return
 		}
 	}
 }
@@ -734,6 +801,9 @@ func usageLogWorker() {
 			}
 		case <-ticker.C:
 			flush()
+		case <-usageWorkerStop:
+			flush() // 先刷掉已取走的 batch 再退出
+			return
 		}
 	}
 }
@@ -747,13 +817,15 @@ func addUsageLog(logEntry UsageLog) {
 		dbAddUsageLog(logEntry)
 	}
 	// 狂暴模式：Redis 实时统计
-	if redisEnabled {
+	if redisReady() {
 		redisIncrUsage(logEntry)
 	}
 }
 
 // flushUsageLogs 刷盘待写入的用量日志（用于优雅关闭时调用）
 func flushUsageLogs() {
+	// 先通知 worker 退出并刷掉它已取走的 batch，再 drain 剩余，避免丢数据
+	usageWorkerStopOnce.Do(func() { close(usageWorkerStop) })
 	batch := make([]UsageLog, 0, 500)
 	for {
 		select {
@@ -776,6 +848,8 @@ func flushUsageLogs() {
 
 // flushErrorLogs 刷盘待写入的错误日志（用于优雅关闭时调用）
 func flushErrorLogs() {
+	// 先通知 worker 退出并刷掉它已取走的 batch，再 drain 剩余，避免丢数据
+	errorWorkerStopOnce.Do(func() { close(errorWorkerStop) })
 	batch := make([]ErrorLog, 0, 500)
 	for {
 		select {
@@ -796,7 +870,7 @@ func flushErrorLogs() {
 
 func getUsageStats() map[string]any {
 	// 狂暴模式：优先从 Redis 读取（内存级延迟）
-	if redisEnabled {
+	if redisReady() {
 		if stats := redisGetUsageStats(); stats != nil {
 			return stats
 		}
@@ -863,6 +937,8 @@ func updateSettings(s Settings) {
 		cfg.Settings.RedisDB = s.RedisDB
 		// UserAgent 允许清空（前端每次保存都会携带该字段）
 		cfg.Settings.UserAgent = s.UserAgent
+		// 管理员登录密码摘要（前端不回传，仅在 PUT 提供时更新）
+		cfg.Settings.AdminPasswordHash = s.AdminPasswordHash
 		// 主备路由单节点超时（秒），0 视为默认 60
 		if s.FailoverTimeout > 0 {
 			cfg.Settings.FailoverTimeout = s.FailoverTimeout
