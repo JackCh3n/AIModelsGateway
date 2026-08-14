@@ -107,6 +107,9 @@ func startServer(port int, listenOverride string) error {
 		})
 	}))
 
+	// Prometheus 指标（公开，仅计数不含敏感信息，供抓取/排查）
+	mux.HandleFunc("/metrics", metricsHandler)
+
 	// 管理后台
 	registerAdminRoutes(mux)
 

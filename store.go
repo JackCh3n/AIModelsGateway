@@ -810,6 +810,15 @@ func usageLogWorker() {
 
 // addUsageLog 异步记录用量（非阻塞），不拖慢请求路径
 func addUsageLog(logEntry UsageLog) {
+	// 可观测性：累计 token / 缓存 / TTFT 指标（原子计数，无锁）
+	metricInputTokens.Add(uint64(logEntry.InputTokens))
+	metricOutputTokens.Add(uint64(logEntry.OutputTokens))
+	metricCacheHit.Add(uint64(logEntry.CacheHit))
+	metricCacheMiss.Add(uint64(logEntry.CacheMiss))
+	if logEntry.TTFTMs > 0 {
+		metricTTFTSumMs.Add(uint64(logEntry.TTFTMs))
+		metricTTFTCount.Add(1)
+	}
 	// 日志明细异步写 SQLite（用于日志查看页面）
 	select {
 	case usageLogCh <- logEntry:
@@ -887,6 +896,8 @@ func addErrorLog(entry ErrorLog) {
 	if entry.StatusCode == 0 {
 		return
 	}
+	// 可观测性：上游错误计数
+	metricUpstreamErrors.Add(1)
 	if len(entry.Message) > 500 {
 		entry.Message = entry.Message[:500]
 	}

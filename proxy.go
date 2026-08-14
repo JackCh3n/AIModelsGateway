@@ -107,6 +107,11 @@ func getHTTPClient(p *Provider) *http.Client {
 // clientFormat: "openai" 或 "anthropic" (客户端发来的格式)
 // providerOverride: 指定 provider（来自 URL 路径），为空则用活跃站点
 func proxyRequest(w http.ResponseWriter, r *http.Request, clientFormat string, providerOverride string) {
+	// 可观测性埋点：请求计数与进行中（gauge）
+	metricReqsTotal.Add(1)
+	metricReqsInFlight.Add(1)
+	defer metricReqsInFlight.Add(-1)
+
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
 		// 请求体超过上限（limitBody 中间件设置）：返回 413 而非 400
