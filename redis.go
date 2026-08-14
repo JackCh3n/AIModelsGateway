@@ -26,6 +26,12 @@ func redisReady() bool {
 	return redisEnabled.Load() && rdb.Load() != nil && redisLogCh != nil
 }
 
+// dayAgg 按天聚合的统计单元（用于近 N 天窗口聚合）
+type dayAgg struct {
+	count, input, output, total                int64
+	ttft, duration, cacheHit, cacheMiss        int64
+}
+
 // initRedis 初始化 Redis 连接（狂暴模式启用时调用）
 func initRedis(addr, password string, db int) {
 	redisMu.Lock()
@@ -142,6 +148,7 @@ func redisWorker() {
 			}
 		case <-ticker.C:
 			flush()
+			cleanupRedisOldKeys() // 顺带清理 7 天前的按天分片 key
 		}
 	}
 }
@@ -214,41 +221,72 @@ func processRedisBatch(batch []UsageLog) {
 			byModelToday[e.Model]++
 		}
 	}
-	// 总计
-	pipe.HIncrBy(ctx, "usage:total", "totalReqs", total.count)
-	pipe.HIncrBy(ctx, "usage:total", "totalInput", total.input)
-	pipe.HIncrBy(ctx, "usage:total", "totalOutput", total.output)
-	pipe.HIncrBy(ctx, "usage:total", "totalTokens", total.total)
-	pipe.HIncrBy(ctx, "usage:total", "totalTTFT", total.ttft)
-	pipe.HIncrBy(ctx, "usage:total", "totalDuration", total.duration)
-	pipe.HIncrBy(ctx, "usage:total", "cacheHit", total.cacheHit)
-	pipe.HIncrBy(ctx, "usage:total", "cacheMiss", total.cacheMiss)
+	// 总计（按天分片存储，读取时聚合近 N 天窗口）
+	pipe.HIncrBy(ctx, "usage:total:"+today, "totalReqs", total.count)
+	pipe.HIncrBy(ctx, "usage:total:"+today, "totalInput", total.input)
+	pipe.HIncrBy(ctx, "usage:total:"+today, "totalOutput", total.output)
+	pipe.HIncrBy(ctx, "usage:total:"+today, "totalTokens", total.total)
+	pipe.HIncrBy(ctx, "usage:total:"+today, "totalTTFT", total.ttft)
+	pipe.HIncrBy(ctx, "usage:total:"+today, "totalDuration", total.duration)
+	pipe.HIncrBy(ctx, "usage:total:"+today, "cacheHit", total.cacheHit)
+	pipe.HIncrBy(ctx, "usage:total:"+today, "cacheMiss", total.cacheMiss)
 	// 按站点
 	for name, a := range byProvider {
-		pipe.HIncrBy(ctx, "usage:byProvider", name+"|count", a.count)
-		pipe.HIncrBy(ctx, "usage:byProvider", name+"|input", a.input)
-		pipe.HIncrBy(ctx, "usage:byProvider", name+"|output", a.output)
-		pipe.HIncrBy(ctx, "usage:byProvider", name+"|total", a.total)
+		pipe.HIncrBy(ctx, "usage:byProvider:"+today, name+"|count", a.count)
+		pipe.HIncrBy(ctx, "usage:byProvider:"+today, name+"|input", a.input)
+		pipe.HIncrBy(ctx, "usage:byProvider:"+today, name+"|output", a.output)
+		pipe.HIncrBy(ctx, "usage:byProvider:"+today, name+"|total", a.total)
 	}
 	// 按模型
 	for model, a := range byModel {
-		pipe.HIncrBy(ctx, "usage:byModel", model+"|count", a.count)
-		pipe.HIncrBy(ctx, "usage:byModel", model+"|input", a.input)
-		pipe.HIncrBy(ctx, "usage:byModel", model+"|output", a.output)
-		pipe.HIncrBy(ctx, "usage:byModel", model+"|total", a.total)
+		pipe.HIncrBy(ctx, "usage:byModel:"+today, model+"|count", a.count)
+		pipe.HIncrBy(ctx, "usage:byModel:"+today, model+"|input", a.input)
+		pipe.HIncrBy(ctx, "usage:byModel:"+today, model+"|output", a.output)
+		pipe.HIncrBy(ctx, "usage:byModel:"+today, model+"|total", a.total)
 	}
-	// 按日期
+	// 按日期（每天一个 hash，field 为 count/input/output/total）
 	for date, a := range byDate {
-		pipe.HIncrBy(ctx, "usage:byDate", date+"|count", a.count)
-		pipe.HIncrBy(ctx, "usage:byDate", date+"|input", a.input)
-		pipe.HIncrBy(ctx, "usage:byDate", date+"|output", a.output)
-		pipe.HIncrBy(ctx, "usage:byDate", date+"|total", a.total)
+		pipe.HIncrBy(ctx, "usage:byDate:"+date, "count", a.count)
+		pipe.HIncrBy(ctx, "usage:byDate:"+date, "input", a.input)
+		pipe.HIncrBy(ctx, "usage:byDate:"+date, "output", a.output)
+		pipe.HIncrBy(ctx, "usage:byDate:"+date, "total", a.total)
 	}
 	// 当日模型请求次数（按日期为键，避免跨天残留）
 	for model, count := range byModelToday {
 		pipe.HIncrBy(ctx, "usage:byModelToday:"+today, model, count)
 	}
 	pipe.Do(ctx)
+}
+
+// lastNDays 返回近 n 天的日期列表（含今天，从新到旧）
+func lastNDays(n int) []string {
+	days := make([]string, 0, n)
+	now := time.Now()
+	for i := 0; i < n; i++ {
+		days = append(days, now.AddDate(0, 0, -i).Format("2006-01-02"))
+	}
+	return days
+}
+
+// cleanupRedisOldKeys 清理 7 天前的 usage:* 按天分片 key，避免无限增长
+func cleanupRedisOldKeys() {
+	client := rdb.Load()
+	if client == nil {
+		return
+	}
+	ctx := context.Background()
+	cutoff := time.Now().AddDate(0, 0, -7).Format("2006-01-02")
+	keys, err := client.Keys(ctx, "usage:*:*").Result()
+	if err != nil {
+		return
+	}
+	for _, k := range keys {
+		parts := strings.Split(k, ":")
+		// 格式均为 usage:维度:YYYY-MM-DD，日期在第 3 段
+		if len(parts) == 3 && parts[2] < cutoff {
+			client.Del(ctx, k)
+		}
+	}
 }
 
 // flushRedisLogs 刷盘待写入的 Redis 日志（用于优雅关闭时调用）
@@ -274,7 +312,7 @@ func flushRedisLogs() {
 	}
 }
 
-// redisGetUsageStats 从 Redis 读取统计数据
+// redisGetUsageStats 从 Redis 读取统计数据（聚合近 7 天的按天分片）
 func redisGetUsageStats() map[string]any {
 	if !redisReady() {
 		return nil
@@ -283,45 +321,98 @@ func redisGetUsageStats() map[string]any {
 	ctx := context.Background()
 	result := map[string]any{}
 
-	// 总计
-	totalFields, err := client.HGetAll(ctx, "usage:total").Result()
-	if err == nil {
-		result["totalInput"] = parseInt64(totalFields["totalInput"])
-		result["totalOutput"] = parseInt64(totalFields["totalOutput"])
-		result["totalTokens"] = parseInt64(totalFields["totalTokens"])
-		result["totalReqs"] = parseInt64(totalFields["totalReqs"])
-		// 性能指标聚合
-		totalReqs := result["totalReqs"].(int64)
-		totalTTFT := parseInt64(totalFields["totalTTFT"])
-		totalDuration := parseInt64(totalFields["totalDuration"])
-		cacheHit := parseInt64(totalFields["cacheHit"])
-		cacheMiss := parseInt64(totalFields["cacheMiss"])
-		result["avgTTFTMs"] = float64(0)
-		result["avgOutputSpeed"] = float64(0)
-		result["cacheHitRate"] = float64(-1)
-		if totalReqs > 0 {
-			result["avgTTFTMs"] = float64(totalTTFT) / float64(totalReqs)
-			if totalDuration > 0 {
-				result["avgOutputSpeed"] = float64(result["totalOutput"].(int64)) / (float64(totalDuration) / 1000.0)
+	total := &dayAgg{}
+	byProvider := map[string]*dayAgg{}
+	byModel := map[string]*dayAgg{}
+	byDate := map[string]*dayAgg{}
+
+	// 聚合近 7 天（含今日）；byDate 提前初始化，保证图表有完整 7 天轴
+	days := lastNDays(7)
+	for _, day := range days {
+		byDate[day] = &dayAgg{}
+		// 总计
+		if f, err := client.HGetAll(ctx, "usage:total:"+day).Result(); err == nil {
+			total.count += parseInt64(f["totalReqs"])
+			total.input += parseInt64(f["totalInput"])
+			total.output += parseInt64(f["totalOutput"])
+			total.total += parseInt64(f["totalTokens"])
+			total.ttft += parseInt64(f["totalTTFT"])
+			total.duration += parseInt64(f["totalDuration"])
+			total.cacheHit += parseInt64(f["cacheHit"])
+			total.cacheMiss += parseInt64(f["cacheMiss"])
+		}
+		// 按站点
+		if pf, err := client.HGetAll(ctx, "usage:byProvider:"+day).Result(); err == nil {
+			for k, v := range pf {
+				parts := strings.SplitN(k, "|", 2)
+				if len(parts) != 2 {
+					continue
+				}
+				a := byProvider[parts[0]]
+				if a == nil {
+					a = &dayAgg{}
+					byProvider[parts[0]] = a
+				}
+				addAggField(a, parts[1], parseInt64(v))
 			}
 		}
-		if cacheHit+cacheMiss > 0 {
-			result["cacheHitRate"] = float64(cacheHit) / float64(cacheHit+cacheMiss)
+		// 按模型
+		if mf, err := client.HGetAll(ctx, "usage:byModel:"+day).Result(); err == nil {
+			for k, v := range mf {
+				parts := strings.SplitN(k, "|", 2)
+				if len(parts) != 2 {
+					continue
+				}
+				a := byModel[parts[0]]
+				if a == nil {
+					a = &dayAgg{}
+					byModel[parts[0]] = a
+				}
+				addAggField(a, parts[1], parseInt64(v))
+			}
 		}
-	} else {
-		result["totalInput"] = int64(0)
-		result["totalOutput"] = int64(0)
-		result["totalTokens"] = int64(0)
-		result["totalReqs"] = int64(0)
-		result["avgTTFTMs"] = float64(0)
-		result["avgOutputSpeed"] = float64(0)
-		result["cacheHitRate"] = float64(-1)
+		// 按日期（每天一个 hash）
+		if df, err := client.HGetAll(ctx, "usage:byDate:"+day).Result(); err == nil {
+			d := byDate[day]
+			d.count = parseInt64(df["count"])
+			d.input = parseInt64(df["input"])
+			d.output = parseInt64(df["output"])
+			d.total = parseInt64(df["total"])
+		}
 	}
 
-	// 按维度解析 Hash
-	result["byProvider"] = parseUsageHash(client.HGetAll(ctx, "usage:byProvider").Result())
-	result["byModel"] = parseUsageHash(client.HGetAll(ctx, "usage:byModel").Result())
-	result["byDate"] = parseUsageHash(client.HGetAll(ctx, "usage:byDate").Result())
+	result["totalInput"] = total.input
+	result["totalOutput"] = total.output
+	result["totalTokens"] = total.total
+	result["totalReqs"] = total.count
+	result["avgTTFTMs"] = float64(0)
+	result["avgOutputSpeed"] = float64(0)
+	result["cacheHitRate"] = float64(-1)
+	if total.count > 0 {
+		result["avgTTFTMs"] = float64(total.ttft) / float64(total.count)
+		if total.duration > 0 {
+			result["avgOutputSpeed"] = float64(total.output) / (float64(total.duration) / 1000.0)
+		}
+	}
+	if total.cacheHit+total.cacheMiss > 0 {
+		result["cacheHitRate"] = float64(total.cacheHit) / float64(total.cacheHit+total.cacheMiss)
+	}
+
+	provOut := map[string]map[string]int64{}
+	for name, a := range byProvider {
+		provOut[name] = map[string]int64{"count": a.count, "input": a.input, "output": a.output, "total": a.total}
+	}
+	modelOut := map[string]map[string]int64{}
+	for name, a := range byModel {
+		modelOut[name] = map[string]int64{"count": a.count, "input": a.input, "output": a.output, "total": a.total}
+	}
+	dateOut := map[string]map[string]int64{}
+	for day, a := range byDate {
+		dateOut[day] = map[string]int64{"count": a.count, "input": a.input, "output": a.output, "total": a.total}
+	}
+	result["byProvider"] = provOut
+	result["byModel"] = modelOut
+	result["byDate"] = dateOut
 
 	// 当日各模型请求次数
 	today := time.Now().Format("2006-01-02")
@@ -337,24 +428,18 @@ func redisGetUsageStats() map[string]any {
 	return result
 }
 
-// parseUsageHash 解析 "name|field" -> value 的 Hash 为嵌套 map
-func parseUsageHash(fields map[string]string, err error) map[string]map[string]int64 {
-	m := map[string]map[string]int64{}
-	if err != nil {
-		return m
+// addAggField 将 "name|field" 聚合值累加到按天聚合结构
+func addAggField(a *dayAgg, field string, v int64) {
+	switch field {
+	case "count":
+		a.count += v
+	case "input":
+		a.input += v
+	case "output":
+		a.output += v
+	case "total":
+		a.total += v
 	}
-	for k, v := range fields {
-		parts := strings.SplitN(k, "|", 2)
-		if len(parts) != 2 {
-			continue
-		}
-		name, field := parts[0], parts[1]
-		if m[name] == nil {
-			m[name] = map[string]int64{}
-		}
-		m[name][field] = parseInt64(v)
-	}
-	return m
 }
 
 func parseInt64(s string) int64 {
@@ -362,15 +447,15 @@ func parseInt64(s string) int64 {
 	return n
 }
 
-// redisClearStats 清空 Redis 统计
+// redisClearStats 清空 Redis 统计（全部 usage:* key，含按天分片）
 func redisClearStats() {
 	if !redisReady() {
 		return
 	}
 	client := rdb.Load()
 	ctx := context.Background()
-	client.Del(ctx, "usage:total", "usage:byProvider", "usage:byModel", "usage:byDate")
-	// 清空当日模型统计（含历史日期键）
-	today := time.Now().Format("2006-01-02")
-	client.Del(ctx, "usage:byModelToday:"+today)
+	keys, err := client.Keys(ctx, "usage:*").Result()
+	if err == nil && len(keys) > 0 {
+		client.Del(ctx, keys...)
+	}
 }

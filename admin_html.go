@@ -197,6 +197,11 @@ tr:hover{background:var(--hover)}
 
 <!-- 统计 -->
 <div class="panel" id="panel-stats">
+<div style="display:flex;align-items:center;gap:8px;margin-bottom:12px">
+<span style="font-size:13px;color:var(--muted)">统计范围：</span>
+<span class="badge badge-active">近 7 天</span>
+<span style="font-size:12px;color:var(--muted)">超出窗口的请求不计入统计页的卡片、表格与图表</span>
+</div>
 <div class="stats-grid" id="statsGrid"></div>
 <div class="card">
 <div class="card-title">请求次数趋势（按日期）</div>

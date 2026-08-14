@@ -215,10 +215,12 @@ func dbGetUsageStats() map[string]any {
 	if db == nil {
 		return emptyStats()
 	}
+	// 统计窗口：仅统计近 7 天的数据（所有表格与图保持一致）
+	cutoff := time.Now().AddDate(0, 0, -7)
 	// 总计（含性能指标聚合）
 	var totalInput, totalOutput, totalAll, totalReqs int64
 	var totalTTFT, totalDuration, cacheHit, cacheMiss int64
-	row := db.QueryRow("SELECT COALESCE(SUM(input_tokens),0),COALESCE(SUM(output_tokens),0),COALESCE(SUM(total_tokens),0),COUNT(*),COALESCE(SUM(ttft_ms),0),COALESCE(SUM(duration_ms),0),COALESCE(SUM(cache_hit),0),COALESCE(SUM(cache_miss),0) FROM usage_logs")
+	row := db.QueryRow("SELECT COALESCE(SUM(input_tokens),0),COALESCE(SUM(output_tokens),0),COALESCE(SUM(total_tokens),0),COUNT(*),COALESCE(SUM(ttft_ms),0),COALESCE(SUM(duration_ms),0),COALESCE(SUM(cache_hit),0),COALESCE(SUM(cache_miss),0) FROM usage_logs WHERE timestamp >= ?", cutoff)
 	row.Scan(&totalInput, &totalOutput, &totalAll, &totalReqs, &totalTTFT, &totalDuration, &cacheHit, &cacheMiss)
 
 	// 性能指标：平均首 token 延迟 / 平均输出速度 / 缓存命中率
@@ -242,7 +244,7 @@ func dbGetUsageStats() map[string]any {
 	byModelToday := map[string]int64{}
 
 	// 按站点
-	rows, err := db.Query("SELECT provider_name,COALESCE(SUM(input_tokens),0),COALESCE(SUM(output_tokens),0),COALESCE(SUM(total_tokens),0),COUNT(*) FROM usage_logs GROUP BY provider_name")
+	rows, err := db.Query("SELECT provider_name,COALESCE(SUM(input_tokens),0),COALESCE(SUM(output_tokens),0),COALESCE(SUM(total_tokens),0),COUNT(*) FROM usage_logs WHERE timestamp >= ? GROUP BY provider_name", cutoff)
 	if err == nil {
 		for rows.Next() {
 			var name string
@@ -254,7 +256,7 @@ func dbGetUsageStats() map[string]any {
 	}
 
 	// 按模型
-	rows, err = db.Query("SELECT model,COALESCE(SUM(input_tokens),0),COALESCE(SUM(output_tokens),0),COALESCE(SUM(total_tokens),0),COUNT(*) FROM usage_logs GROUP BY model")
+	rows, err = db.Query("SELECT model,COALESCE(SUM(input_tokens),0),COALESCE(SUM(output_tokens),0),COALESCE(SUM(total_tokens),0),COUNT(*) FROM usage_logs WHERE timestamp >= ? GROUP BY model", cutoff)
 	if err == nil {
 		for rows.Next() {
 			var model string
@@ -266,7 +268,7 @@ func dbGetUsageStats() map[string]any {
 	}
 
 	// 当日各模型请求次数
-	rows, err = db.Query("SELECT model,COUNT(*) FROM usage_logs WHERE substr(timestamp,1,10)=? GROUP BY model ORDER BY COUNT(*) DESC", today)
+	rows, err = db.Query("SELECT model,COUNT(*) FROM usage_logs WHERE substr(timestamp,1,10)=? AND timestamp >= ? GROUP BY model ORDER BY COUNT(*) DESC", today, cutoff)
 	if err == nil {
 		for rows.Next() {
 			var model string
@@ -281,7 +283,7 @@ func dbGetUsageStats() map[string]any {
 	// 注意：SQLite 的 date() 函数无法解析带时区偏移和纳秒的时间戳格式
 	// (如 2026-08-05T01:10:41.8356031+08:00)，会返回 NULL。
 	// 因此改用 substr 提取前 10 位日期 (YYYY-MM-DD)。
-	rows, err = db.Query("SELECT substr(timestamp,1,10),COALESCE(SUM(input_tokens),0),COALESCE(SUM(output_tokens),0),COALESCE(SUM(total_tokens),0),COUNT(*) FROM usage_logs GROUP BY substr(timestamp,1,10) ORDER BY substr(timestamp,1,10) DESC")
+	rows, err = db.Query("SELECT substr(timestamp,1,10),COALESCE(SUM(input_tokens),0),COALESCE(SUM(output_tokens),0),COALESCE(SUM(total_tokens),0),COUNT(*) FROM usage_logs WHERE timestamp >= ? GROUP BY substr(timestamp,1,10) ORDER BY substr(timestamp,1,10) DESC", cutoff)
 	if err == nil {
 		for rows.Next() {
 			var date string
