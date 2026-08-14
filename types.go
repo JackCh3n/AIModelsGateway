@@ -66,6 +66,7 @@ type UsageLog struct {
 	DurationMs int `json:"durationMs"` // 请求总耗时（毫秒）
 	CacheHit   int `json:"cacheHit"`   // 缓存命中的输入 token
 	CacheMiss  int `json:"cacheMiss"`  // 未命中的输入 token
+	Cost       float64 `json:"cost"`   // 本次请求成本估算（按 Settings 价格 × token）
 }
 
 // ErrorLog 上游请求错误记录（用于后台查看失败明细）
@@ -99,6 +100,9 @@ type Settings struct {
 	RedisAddr     string `json:"redisAddr"`     // Redis 地址，如 127.0.0.1:6379
 	RedisPassword string `json:"redisPassword"` // Redis 密码
 	RedisDB       int    `json:"redisDb"`       // Redis DB 编号
+	// 成本估算：每百万 token 的价格（币种自定，如美元/人民币）；0 表示不计费
+	InputPricePerMTok  float64 `json:"inputPricePerMTok"`  // 每百万输入 token 价格
+	OutputPricePerMTok float64 `json:"outputPricePerMTok"` // 每百万输出 token 价格
 	// AdminPasswordHash 管理后台登录密码的 SHA-256 十六进制摘要（可选，为空则不启用登录保护）
 	AdminPasswordHash string `json:"adminPasswordHash,omitempty"`
 }

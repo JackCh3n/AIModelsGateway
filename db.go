@@ -47,7 +47,8 @@ func initDB() {
 			ttft_ms INTEGER,
 			duration_ms INTEGER,
 			cache_hit INTEGER,
-			cache_miss INTEGER
+			cache_miss INTEGER,
+			cost REAL
 		)`)
 		if err != nil {
 			log.Printf("sqlite create table error: %v", err)
@@ -57,11 +58,12 @@ func initDB() {
 		_, _ = db.Exec("CREATE INDEX IF NOT EXISTS idx_logs_ts ON usage_logs(timestamp DESC)")
 		_, _ = db.Exec("CREATE INDEX IF NOT EXISTS idx_logs_provider ON usage_logs(provider_name)")
 		_, _ = db.Exec("CREATE INDEX IF NOT EXISTS idx_logs_model ON usage_logs(model)")
-		// 兼容旧表：补充性能指标列（已存在时报错忽略）
+		// 兼容旧表：补充性能指标与成本列（已存在时报错忽略）
 		_, _ = db.Exec("ALTER TABLE usage_logs ADD COLUMN ttft_ms INTEGER")
 		_, _ = db.Exec("ALTER TABLE usage_logs ADD COLUMN duration_ms INTEGER")
 		_, _ = db.Exec("ALTER TABLE usage_logs ADD COLUMN cache_hit INTEGER")
 		_, _ = db.Exec("ALTER TABLE usage_logs ADD COLUMN cache_miss INTEGER")
+		_, _ = db.Exec("ALTER TABLE usage_logs ADD COLUMN cost REAL")
 		// 错误日志表
 		_, err = db.Exec(`CREATE TABLE IF NOT EXISTS error_logs (
 			id TEXT PRIMARY KEY,
@@ -91,10 +93,10 @@ func dbAddUsageLog(entry UsageLog) {
 	if db == nil {
 		return
 	}
-	_, err := db.Exec("INSERT OR IGNORE INTO usage_logs(id,provider_id,provider_name,model,input_tokens,output_tokens,total_tokens,client_format,timestamp,ttft_ms,duration_ms,cache_hit,cache_miss) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)",
+	_, err := db.Exec("INSERT OR IGNORE INTO usage_logs(id,provider_id,provider_name,model,input_tokens,output_tokens,total_tokens,client_format,timestamp,ttft_ms,duration_ms,cache_hit,cache_miss,cost) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
 		entry.ID, entry.ProviderID, entry.ProviderName, entry.Model,
 		entry.InputTokens, entry.OutputTokens, entry.TotalTokens, entry.ClientFormat, entry.Timestamp,
-		entry.TTFTMs, entry.DurationMs, entry.CacheHit, entry.CacheMiss,
+		entry.TTFTMs, entry.DurationMs, entry.CacheHit, entry.CacheMiss, entry.Cost,
 	)
 	if err != nil {
 		log.Printf("sqlite insert error: %v", err)
@@ -192,7 +194,7 @@ func dbBatchInsertUsageLogs(entries []UsageLog) {
 		}
 		return
 	}
-	stmt, err := tx.Prepare("INSERT OR IGNORE INTO usage_logs(id,provider_id,provider_name,model,input_tokens,output_tokens,total_tokens,client_format,timestamp,ttft_ms,duration_ms,cache_hit,cache_miss) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)")
+	stmt, err := tx.Prepare("INSERT OR IGNORE INTO usage_logs(id,provider_id,provider_name,model,input_tokens,output_tokens,total_tokens,client_format,timestamp,ttft_ms,duration_ms,cache_hit,cache_miss,cost) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)")
 	if err != nil {
 		tx.Rollback()
 		log.Printf("sqlite batch prepare error: %v", err)
@@ -202,7 +204,7 @@ func dbBatchInsertUsageLogs(entries []UsageLog) {
 	for _, e := range entries {
 		_, _ = stmt.Exec(e.ID, e.ProviderID, e.ProviderName, e.Model,
 			e.InputTokens, e.OutputTokens, e.TotalTokens, e.ClientFormat, e.Timestamp,
-			e.TTFTMs, e.DurationMs, e.CacheHit, e.CacheMiss)
+			e.TTFTMs, e.DurationMs, e.CacheHit, e.CacheMiss, e.Cost)
 	}
 	if err := tx.Commit(); err != nil {
 		log.Printf("sqlite batch commit error: %v", err)
@@ -217,11 +219,12 @@ func dbGetUsageStats() map[string]any {
 	}
 	// 统计窗口：仅统计近 7 天的数据（所有表格与图保持一致）
 	cutoff := time.Now().AddDate(0, 0, -7)
-	// 总计（含性能指标聚合）
+	// 总计（含性能指标聚合与成本）
 	var totalInput, totalOutput, totalAll, totalReqs int64
 	var totalTTFT, totalDuration, cacheHit, cacheMiss int64
-	row := db.QueryRow("SELECT COALESCE(SUM(input_tokens),0),COALESCE(SUM(output_tokens),0),COALESCE(SUM(total_tokens),0),COUNT(*),COALESCE(SUM(ttft_ms),0),COALESCE(SUM(duration_ms),0),COALESCE(SUM(cache_hit),0),COALESCE(SUM(cache_miss),0) FROM usage_logs WHERE timestamp >= ?", cutoff)
-	row.Scan(&totalInput, &totalOutput, &totalAll, &totalReqs, &totalTTFT, &totalDuration, &cacheHit, &cacheMiss)
+	var totalCost float64
+	row := db.QueryRow("SELECT COALESCE(SUM(input_tokens),0),COALESCE(SUM(output_tokens),0),COALESCE(SUM(total_tokens),0),COUNT(*),COALESCE(SUM(ttft_ms),0),COALESCE(SUM(duration_ms),0),COALESCE(SUM(cache_hit),0),COALESCE(SUM(cache_miss),0),COALESCE(SUM(cost),0) FROM usage_logs WHERE timestamp >= ?", cutoff)
+	row.Scan(&totalInput, &totalOutput, &totalAll, &totalReqs, &totalTTFT, &totalDuration, &cacheHit, &cacheMiss, &totalCost)
 
 	// 性能指标：平均首 token 延迟 / 平均输出速度 / 缓存命中率
 	avgTTFTMs := float64(0)
@@ -302,6 +305,7 @@ func dbGetUsageStats() map[string]any {
 		"avgTTFTMs":       avgTTFTMs,
 		"avgOutputSpeed":  avgOutputSpeed,
 		"cacheHitRate":    cacheRate,
+		"totalCost":       totalCost,
 		"byProvider":      byProvider,
 		"byModel":         byModel,
 		"byDate":          byDate,
@@ -325,7 +329,7 @@ func dbGetRecentLogs(page, pageSize int) ([]UsageLog, int) {
 	db.QueryRow("SELECT COUNT(*) FROM usage_logs").Scan(&total)
 
 	offset := (page - 1) * pageSize
-	rows, err := db.Query("SELECT id,provider_id,provider_name,model,input_tokens,output_tokens,total_tokens,client_format,timestamp,COALESCE(ttft_ms,0),COALESCE(duration_ms,0),COALESCE(cache_hit,0),COALESCE(cache_miss,0) FROM usage_logs ORDER BY timestamp DESC LIMIT ? OFFSET ?", pageSize, offset)
+	rows, err := db.Query("SELECT id,provider_id,provider_name,model,input_tokens,output_tokens,total_tokens,client_format,timestamp,COALESCE(ttft_ms,0),COALESCE(duration_ms,0),COALESCE(cache_hit,0),COALESCE(cache_miss,0),COALESCE(cost,0) FROM usage_logs ORDER BY timestamp DESC LIMIT ? OFFSET ?", pageSize, offset)
 	if err != nil {
 		log.Printf("sqlite query logs error: %v", err)
 		return []UsageLog{}, total
@@ -336,7 +340,7 @@ func dbGetRecentLogs(page, pageSize int) ([]UsageLog, int) {
 	for rows.Next() {
 		var l UsageLog
 		var ts time.Time
-		rows.Scan(&l.ID, &l.ProviderID, &l.ProviderName, &l.Model, &l.InputTokens, &l.OutputTokens, &l.TotalTokens, &l.ClientFormat, &ts, &l.TTFTMs, &l.DurationMs, &l.CacheHit, &l.CacheMiss)
+		rows.Scan(&l.ID, &l.ProviderID, &l.ProviderName, &l.Model, &l.InputTokens, &l.OutputTokens, &l.TotalTokens, &l.ClientFormat, &ts, &l.TTFTMs, &l.DurationMs, &l.CacheHit, &l.CacheMiss, &l.Cost)
 		l.Timestamp = ts
 		result = append(result, l)
 	}
@@ -382,6 +386,7 @@ func emptyStats() map[string]any {
 		"avgTTFTMs":      float64(0),
 		"avgOutputSpeed": float64(0),
 		"cacheHitRate":   float64(-1),
+		"totalCost":      float64(0),
 		"byProvider":     map[string]map[string]int64{},
 		"byModel":        map[string]map[string]int64{},
 		"byDate":         map[string]map[string]int64{},

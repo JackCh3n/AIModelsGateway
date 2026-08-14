@@ -49,8 +49,13 @@ func TestMetricsStatsEndToEnd(t *testing.T) {
 			Status: "active", Models: []string{"m1"},
 			APIKeys: []ProviderKey{{ID: "k1", Key: "sk-test", Status: "active"}},
 		}},
-		APIKeys:  []APIKey{},
-		Settings: Settings{DefaultModel: "all", FailoverTimeout: 60},
+		APIKeys: []APIKey{},
+		Settings: Settings{
+			DefaultModel:      "all",
+			FailoverTimeout:   60,
+			InputPricePerMTok: 1.0,  // 每百万输入 1 元
+			OutputPricePerMTok: 2.0, // 每百万输出 2 元
+		},
 	}
 	cfg.idx = buildIndex(cfg)
 	configPtr.Store(cfg)
@@ -105,7 +110,12 @@ func TestMetricsStatsEndToEnd(t *testing.T) {
 	if cacheRate < 0.69 || cacheRate > 0.71 {
 		t.Errorf("cacheHitRate = %v, want ~0.70 (70/100)", cacheRate)
 	}
-	t.Logf("stats: avgTTFTMs=%.0f avgOutputSpeed=%.0f cacheHitRate=%.2f", avgTTFT, avgSpeed, cacheRate)
+	// 成本：3 次请求 × (100 输入/1e6*1 + 20 输出/1e6*2) = 3 × 0.00014 = 0.00042
+	totalCost, _ := stats["totalCost"].(float64)
+	if totalCost < 0.00041 || totalCost > 0.00043 {
+		t.Errorf("totalCost = %v, want ~0.00042", totalCost)
+	}
+	t.Logf("stats: avgTTFTMs=%.0f avgOutputSpeed=%.0f cacheHitRate=%.2f totalCost=%.5f", avgTTFT, avgSpeed, cacheRate, totalCost)
 
 	// 日志接口
 	lRes, err := http.Get(gw.URL + "/admin/api/logs?page=1&pageSize=5")

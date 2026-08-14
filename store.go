@@ -744,15 +744,21 @@ var (
 	usageWorkerStopOnce sync.Once
 	errorWorkerStop    = make(chan struct{})
 	errorWorkerStopOnce sync.Once
+	// worker 退出等待：flush 时 close 停止信号后，等待 worker 刷完自己的 batch 再返回
+	usageWorkerWG sync.WaitGroup
+	errorWorkerWG sync.WaitGroup
 )
 
 func init() {
+	usageWorkerWG.Add(1)
+	errorWorkerWG.Add(1)
 	go usageLogWorker()
 	go errorLogWorker()
 }
 
 // errorLogWorker 后台批量写入错误日志，每 1 秒或满 500 条刷一次
 func errorLogWorker() {
+	defer errorWorkerWG.Done()
 	ticker := time.NewTicker(1 * time.Second)
 	defer ticker.Stop()
 	batch := make([]ErrorLog, 0, 500)
@@ -782,6 +788,7 @@ func errorLogWorker() {
 // usageLogWorker 后台批量写入 SQLite，每 1 秒或满 500 条刷一次
 // 500 条一个事务，减少 SQLite 写锁竞争，提升吞吐
 func usageLogWorker() {
+	defer usageWorkerWG.Done()
 	ticker := time.NewTicker(1 * time.Second)
 	defer ticker.Stop()
 	batch := make([]UsageLog, 0, 500)
@@ -810,6 +817,10 @@ func usageLogWorker() {
 
 // addUsageLog 异步记录用量（非阻塞），不拖慢请求路径
 func addUsageLog(logEntry UsageLog) {
+	// 成本估算：输入/输出 token × 每百万价格（Settings 配置，默认 0 不计费）
+	s := getSettings()
+	logEntry.Cost = float64(logEntry.InputTokens)/1e6*s.InputPricePerMTok +
+		float64(logEntry.OutputTokens)/1e6*s.OutputPricePerMTok
 	// 可观测性：累计 token / 缓存 / TTFT 指标（原子计数，无锁）
 	metricInputTokens.Add(uint64(logEntry.InputTokens))
 	metricOutputTokens.Add(uint64(logEntry.OutputTokens))
@@ -833,8 +844,9 @@ func addUsageLog(logEntry UsageLog) {
 
 // flushUsageLogs 刷盘待写入的用量日志（用于优雅关闭时调用）
 func flushUsageLogs() {
-	// 先通知 worker 退出并刷掉它已取走的 batch，再 drain 剩余，避免丢数据
+	// 先通知 worker 退出并刷掉它已取走的 batch，等待其落库完成，再 drain 剩余，避免丢数据
 	usageWorkerStopOnce.Do(func() { close(usageWorkerStop) })
+	usageWorkerWG.Wait()
 	batch := make([]UsageLog, 0, 500)
 	for {
 		select {
@@ -857,8 +869,9 @@ func flushUsageLogs() {
 
 // flushErrorLogs 刷盘待写入的错误日志（用于优雅关闭时调用）
 func flushErrorLogs() {
-	// 先通知 worker 退出并刷掉它已取走的 batch，再 drain 剩余，避免丢数据
+	// 先通知 worker 退出并刷掉它已取走的 batch，等待其落库完成，再 drain 剩余，避免丢数据
 	errorWorkerStopOnce.Do(func() { close(errorWorkerStop) })
+	errorWorkerWG.Wait()
 	batch := make([]ErrorLog, 0, 500)
 	for {
 		select {
@@ -936,6 +949,9 @@ func updateSettings(s Settings) {
 		oldRedisDB = cfg.Settings.RedisDB
 		cfg.Settings.ActiveProviderID = s.ActiveProviderID
 		cfg.Settings.DefaultModel = s.DefaultModel
+		cfg.Settings.ListenAddr = s.ListenAddr
+		cfg.Settings.InputPricePerMTok = s.InputPricePerMTok
+		cfg.Settings.OutputPricePerMTok = s.OutputPricePerMTok
 		if len(s.InputPresets) > 0 {
 			cfg.Settings.InputPresets = s.InputPresets
 		}

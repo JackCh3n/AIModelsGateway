@@ -267,6 +267,16 @@ tr:hover{background:var(--hover)}
 <label>主备路由单节点请求超时（秒，默认 60）：单站点请求超过该时间无响应时，自动顺延到下一个站点/模型</label>
 <input class="input" id="failoverTimeoutInput" type="number" min="1" placeholder="60">
 </div>
+<div class="form-row">
+<div class="form-group">
+<label>输入价格（每百万 token，币种自定，0 不计费）</label>
+<input class="input" id="inputPriceInput" type="number" step="0.0001" min="0" placeholder="如 0.14">
+</div>
+<div class="form-group">
+<label>输出价格（每百万 token，币种自定，0 不计费）</label>
+<input class="input" id="outputPriceInput" type="number" step="0.0001" min="0" placeholder="如 0.42">
+</div>
+</div>
 <div class="form-group" style="margin-bottom:16px">
 <label>管理员密码（可选）：设置后访问管理后台需登录，防止局域网内他人读取/修改配置</label>
 <div style="display:flex;gap:8px;align-items:center">
@@ -2449,7 +2459,13 @@ statCard((td.output||0).toLocaleString(),'今日输出 Token')+
 statCard((td.total||0).toLocaleString(),'今日 Token 总量')+
 statCard(fmtTTFT(stats.avgTTFTMs),'平均首 Token 延迟')+
 statCard(fmtSpeed(stats.avgOutputSpeed),'平均输出速度')+
-statCard(fmtPct(stats.cacheHitRate),'缓存命中率');
+statCard(fmtPct(stats.cacheHitRate),'缓存命中率')+
+statCard(fmtCost(stats.totalCost),'总成本');
+}
+
+function fmtCost(c){
+if(c==null||c===0)return'0';
+return Number(c).toLocaleString('zh-CN',{minimumFractionDigits:2,maximumFractionDigits:4});
 }
 
 function fmtTTFT(ms){
@@ -2572,6 +2588,8 @@ if(data.outputPresets&&data.outputPresets.length)outputPresets=data.outputPreset
 document.getElementById('globalUserAgentInput').value=data.userAgent||'';
 document.getElementById('listenAddrInput').value=data.listenAddr||'127.0.0.1';
 document.getElementById('failoverTimeoutInput').value=data.failoverTimeout||60;
+document.getElementById('inputPriceInput').value=data.inputPricePerMTok||0;
+document.getElementById('outputPriceInput').value=data.outputPricePerMTok||0;
 renderPresetEditors();
 loadGlobalModelConfigs();
 // 狂暴模式
@@ -2605,6 +2623,8 @@ inputPresets:inputPresets,
 outputPresets:outputPresets,
 listenAddr:document.getElementById('listenAddrInput').value.trim()||'127.0.0.1',
 userAgent:document.getElementById('globalUserAgentInput').value.trim(),
+inputPricePerMTok:parseFloat(document.getElementById('inputPriceInput').value)||0,
+outputPricePerMTok:parseFloat(document.getElementById('outputPriceInput').value)||0,
 failoverTimeout:parseInt(document.getElementById('failoverTimeoutInput').value)||60,
 rageMode:document.getElementById('rageModeToggle').checked,
 redisAddr:document.getElementById('redisAddrInput').value.trim(),

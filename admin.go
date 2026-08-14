@@ -337,6 +337,8 @@ func registerAdminRoutes(mux *http.ServeMux) {
 				RedisAddr        *string  `json:"redisAddr"`
 				RedisPassword    *string  `json:"redisPassword"`
 				RedisDB          *int     `json:"redisDb"`
+				InputPricePerMTok  *float64 `json:"inputPricePerMTok"`
+				OutputPricePerMTok *float64 `json:"outputPricePerMTok"`
 				AdminPassword    *string  `json:"adminPassword"`
 			}
 			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
@@ -369,6 +371,12 @@ func registerAdminRoutes(mux *http.ServeMux) {
 			merge(&cur.RedisPassword, body.RedisPassword)
 			if body.RedisDB != nil {
 				cur.RedisDB = *body.RedisDB
+			}
+			if body.InputPricePerMTok != nil {
+				cur.InputPricePerMTok = *body.InputPricePerMTok
+			}
+			if body.OutputPricePerMTok != nil {
+				cur.OutputPricePerMTok = *body.OutputPricePerMTok
 			}
 			if body.AdminPassword != nil {
 				cur.AdminPasswordHash = ""

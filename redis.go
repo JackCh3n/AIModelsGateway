@@ -30,6 +30,7 @@ func redisReady() bool {
 type dayAgg struct {
 	count, input, output, total                int64
 	ttft, duration, cacheHit, cacheMiss        int64
+	cost                                       float64 // 成本（仅总计维度统计）
 }
 
 // initRedis 初始化 Redis 连接（狂暴模式启用时调用）
@@ -168,6 +169,7 @@ func processRedisBatch(batch []UsageLog) {
 		input, output, total int64
 		ttft, duration       int64 // 性能指标：首 token 延迟与总耗时（毫秒）
 		cacheHit, cacheMiss  int64 // 缓存命中/未命中输入 token
+		cost                 float64 // 成本估算
 	}
 	total := agg{}
 	byProvider := map[string]*agg{}
@@ -184,6 +186,7 @@ func processRedisBatch(batch []UsageLog) {
 		total.duration += int64(e.DurationMs)
 		total.cacheHit += int64(e.CacheHit)
 		total.cacheMiss += int64(e.CacheMiss)
+		total.cost += e.Cost
 
 		p := byProvider[e.ProviderName]
 		if p == nil {
@@ -230,6 +233,7 @@ func processRedisBatch(batch []UsageLog) {
 	pipe.HIncrBy(ctx, "usage:total:"+today, "totalDuration", total.duration)
 	pipe.HIncrBy(ctx, "usage:total:"+today, "cacheHit", total.cacheHit)
 	pipe.HIncrBy(ctx, "usage:total:"+today, "cacheMiss", total.cacheMiss)
+	pipe.HIncrByFloat(ctx, "usage:total:"+today, "totalCost", total.cost)
 	// 按站点
 	for name, a := range byProvider {
 		pipe.HIncrBy(ctx, "usage:byProvider:"+today, name+"|count", a.count)
@@ -340,6 +344,7 @@ func redisGetUsageStats() map[string]any {
 			total.duration += parseInt64(f["totalDuration"])
 			total.cacheHit += parseInt64(f["cacheHit"])
 			total.cacheMiss += parseInt64(f["cacheMiss"])
+			total.cost += parseFloat64(f["totalCost"])
 		}
 		// 按站点
 		if pf, err := client.HGetAll(ctx, "usage:byProvider:"+day).Result(); err == nil {
@@ -385,6 +390,7 @@ func redisGetUsageStats() map[string]any {
 	result["totalOutput"] = total.output
 	result["totalTokens"] = total.total
 	result["totalReqs"] = total.count
+	result["totalCost"] = total.cost
 	result["avgTTFTMs"] = float64(0)
 	result["avgOutputSpeed"] = float64(0)
 	result["cacheHitRate"] = float64(-1)
@@ -445,6 +451,11 @@ func addAggField(a *dayAgg, field string, v int64) {
 func parseInt64(s string) int64 {
 	n, _ := strconv.ParseInt(s, 10, 64)
 	return n
+}
+
+func parseFloat64(s string) float64 {
+	f, _ := strconv.ParseFloat(s, 64)
+	return f
 }
 
 // redisClearStats 清空 Redis 统计（全部 usage:* key，含按天分片）
