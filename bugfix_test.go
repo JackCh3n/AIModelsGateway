@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+	"time"
 )
 
 // 测试 anthropicToOpenAIReq 多 tool_result 不丢失
@@ -162,8 +163,7 @@ func TestLimitToTokensCase(t *testing.T) {
 }
 
 // 测试缓存指标提取（三种上游格式）
-func TestExtractCacheFromUsage(t *testing.T) {
-	// DeepSeek 风格
+func TestExtractCacheFromUsage(t *testing.T) {	// DeepSeek 风格
 	hit, miss := extractCacheFromUsage(map[string]any{
 		"prompt_cache_hit_tokens":  float64(100),
 		"prompt_cache_miss_tokens": float64(50),
@@ -193,5 +193,39 @@ func TestExtractCacheFromUsage(t *testing.T) {
 	hit, miss = extractCacheFromUsage(map[string]any{"prompt_tokens": float64(10)})
 	if hit != 0 || miss != 0 {
 		t.Errorf("no cache: hit=%d miss=%d, want 0/0", hit, miss)
+	}
+}
+
+// 测试主备路由熔断器：连续失败达到阈值后熔断，成功后恢复
+func TestFailoverBreaker(t *testing.T) {
+	b := &breaker{states: make(map[string]*breakerState)}
+	if !b.allow("p1") {
+		t.Fatal("初始状态应放行")
+	}
+	// 连续失败 3 次 → 熔断
+	b.recordFailure("p1")
+	b.recordFailure("p1")
+	b.recordFailure("p1")
+	if b.allow("p1") {
+		t.Error("连续失败 3 次后应熔断")
+	}
+	// 其他站点不受影响
+	if !b.allow("p2") {
+		t.Error("无关站点不应被熔断")
+	}
+	// 成功应恢复
+	b.recordSuccess("p1")
+	if !b.allow("p1") {
+		t.Error("成功后应恢复放行")
+	}
+	// 熔断冷却期结束应恢复（手动把 openUntil 置为过去）
+	b.recordFailure("p1")
+	b.recordFailure("p1")
+	b.recordFailure("p1")
+	b.mu.Lock()
+	b.states["p1"].openUntil = time.Now().Add(-time.Second)
+	b.mu.Unlock()
+	if !b.allow("p1") {
+		t.Error("冷却期结束后应恢复放行")
 	}
 }

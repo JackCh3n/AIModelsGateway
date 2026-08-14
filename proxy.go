@@ -505,14 +505,22 @@ func proxyFailoverRequest(w http.ResponseWriter, r *http.Request, clientFormat s
 			log.Printf("[failover] %s: [%d/%d] 站点 %s 已禁用", fo.Name, i+1, total, provider.Name)
 			continue
 		}
+		// 熔断检查：连续失败达到阈值后冷却期内直接跳过该站点，不再白等超时
+		if !failoverBreaker.allow(provider.ID) {
+			lastErr = fmt.Sprintf("主备路由 %s 站点 %s 熔断中（连续失败，%s 后自动恢复）", fo.Name, provider.Name, breakerCooldown)
+			log.Printf("[failover] %s: [%d/%d] 站点 %s 熔断中，跳过", fo.Name, i+1, total, provider.Name)
+			continue
+		}
 
 		log.Printf("[failover] %s: [%d/%d] 尝试站点 %s (order=%d, model=%s)", fo.Name, i+1, total, provider.Name, entry.Order, entry.Model)
 		// 主备路由：单站点仅重试 1 次（延迟 1s），失败即顺延到下一个站点
 		handled := forwardToProvider(w, r, clientFormat, provider, entry.Model, body, params, isStream, 1, failoverTimeout)
 		if handled {
+			failoverBreaker.recordSuccess(provider.ID)
 			log.Printf("[failover] %s: [%d/%d] 站点 %s / 模型 %s 成功，返回结果", fo.Name, i+1, total, provider.Name, entry.Model)
 			return // 该站点成功或错误已写入响应
 		}
+		failoverBreaker.recordFailure(provider.ID)
 		lastErr = fmt.Sprintf("主备路由 %s 全部站点失败，最后尝试: %s", fo.Name, provider.Name)
 		log.Printf("[failover] %s: [%d/%d] 站点 %s 失败（重试1次后仍失败）", fo.Name, i+1, total, provider.Name)
 		if i < len(fo.Entries)-1 {
