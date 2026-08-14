@@ -328,6 +328,7 @@ func registerAdminRoutes(mux *http.ServeMux) {
 			var body struct {
 				ActiveProviderID *string  `json:"activeProviderId"`
 				DefaultModel     *string  `json:"defaultModel"`
+				ListenAddr       *string  `json:"listenAddr"`
 				InputPresets     []string `json:"inputPresets"`
 				OutputPresets    []string `json:"outputPresets"`
 				UserAgent        *string  `json:"userAgent"`
@@ -350,6 +351,7 @@ func registerAdminRoutes(mux *http.ServeMux) {
 			}
 			merge(&cur.ActiveProviderID, body.ActiveProviderID)
 			merge(&cur.DefaultModel, body.DefaultModel)
+			merge(&cur.ListenAddr, body.ListenAddr)
 			if len(body.InputPresets) > 0 {
 				cur.InputPresets = body.InputPresets
 			}

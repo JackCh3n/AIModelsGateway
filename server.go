@@ -5,10 +5,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -26,6 +28,17 @@ func exeDir() string {
 	return filepath.Dir(exe)
 }
 
+// netAddrTip 返回监听地址的提示文本
+func netAddrTip(addr string) string {
+	if addr == "0.0.0.0" {
+		return " (局域网可访问，建议启用管理后台登录保护)"
+	}
+	if addr == "127.0.0.1" || addr == "::1" || addr == "localhost" {
+		return " (仅本机可访问)"
+	}
+	return ""
+}
+
 func corsHandler(h http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Access-Control-Allow-Origin", "*")
@@ -40,7 +53,7 @@ func corsHandler(h http.HandlerFunc) http.HandlerFunc {
 	}
 }
 
-func startServer(port int) error {
+func startServer(port int, listenOverride string) error {
 	// 预加载配置
 	cfg := loadConfig()
 	log.Printf("已加载: %d 个中转站, %d 个 API Key", len(cfg.Providers), len(cfg.APIKeys))
@@ -49,6 +62,16 @@ func startServer(port int) error {
 			log.Printf("当前活跃站点: %s (%s)", p.Name, p.Format)
 		}
 	}
+
+	// 监听地址：命令行 -listen 优先，其次配置，默认仅本机 127.0.0.1
+	listenAddr := listenOverride
+	if listenAddr == "" {
+		listenAddr = cfg.Settings.ListenAddr
+	}
+	if listenAddr == "" {
+		listenAddr = "127.0.0.1"
+	}
+	log.Printf("监听地址: %s:%d", listenAddr, port)
 
 	// 如果启动时已配置狂暴模式，连接 Redis
 	if cfg.Settings.RageMode && cfg.Settings.RedisAddr != "" {
@@ -183,7 +206,8 @@ func startServer(port int) error {
 	mux.HandleFunc("/models", modelsHandler)
 
 	// 启动信息
-	addr := fmt.Sprintf(":%d", port)
+	// 监听地址：默认仅本机 127.0.0.1（安全）；可在设置页配置 0.0.0.0 供局域网访问，重启生效
+	addr := net.JoinHostPort(listenAddr, strconv.Itoa(port))
 	// 控制台横幅版本：优先使用编译时注入的版本（-ldflags -X main.Version=...），
 	// 未注入（go run 调试）时显示 v1.0 兜底
 	dispVer := Version
@@ -194,6 +218,7 @@ func startServer(port int) error {
 	fmt.Println(strings.Repeat("=", 56))
 	fmt.Printf("  AI Models Gateway %s\n", dispVer)
 	fmt.Println(strings.Repeat("=", 56))
+	fmt.Printf("  监听地址:   %s:%d%s\n", listenAddr, port, netAddrTip(listenAddr))
 	fmt.Printf("  服务地址:   http://127.0.0.1:%d\n", port)
 	fmt.Printf("  OpenAI:    http://127.0.0.1:%d/v1/chat/completions\n", port)
 	fmt.Printf("  Anthropic: http://127.0.0.1:%d/v1/messages\n", port)

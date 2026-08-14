@@ -256,6 +256,10 @@ tr:hover{background:var(--hover)}
 <div class="card">
 <div class="card-title">全局设置</div>
 <div class="form-group" style="margin-bottom:16px">
+<label>监听地址（下次重启生效）：默认 127.0.0.1 仅本机可访问（安全）；填 0.0.0.0 则局域网可访问（建议同时启用管理后台登录保护）</label>
+<input class="input" id="listenAddrInput" placeholder="127.0.0.1 或 0.0.0.0" oninput="this.value=this.value.trim()">
+</div>
+<div class="form-group" style="margin-bottom:16px">
 <label>全局 User-Agent (转发到上游时的请求头，覆盖默认 go-http-client/1.1)</label>
 <input class="input" id="globalUserAgentInput" placeholder="如: Mozilla/5.0 (Windows NT 10.0; Win64; x64) ... 留空则保持默认">
 </div>
@@ -2566,6 +2570,7 @@ activeProviderId=data.activeProviderId||'';
 if(data.inputPresets&&data.inputPresets.length)inputPresets=data.inputPresets;
 if(data.outputPresets&&data.outputPresets.length)outputPresets=data.outputPresets;
 document.getElementById('globalUserAgentInput').value=data.userAgent||'';
+document.getElementById('listenAddrInput').value=data.listenAddr||'127.0.0.1';
 document.getElementById('failoverTimeoutInput').value=data.failoverTimeout||60;
 renderPresetEditors();
 loadGlobalModelConfigs();
@@ -2598,6 +2603,7 @@ return {
 activeProviderId:activeProviderId,
 inputPresets:inputPresets,
 outputPresets:outputPresets,
+listenAddr:document.getElementById('listenAddrInput').value.trim()||'127.0.0.1',
 userAgent:document.getElementById('globalUserAgentInput').value.trim(),
 failoverTimeout:parseInt(document.getElementById('failoverTimeoutInput').value)||60,
 rageMode:document.getElementById('rageModeToggle').checked,

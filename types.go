@@ -87,6 +87,9 @@ type Settings struct {
 	DefaultModel     string   `json:"defaultModel"`
 	InputPresets     []string `json:"inputPresets"`  // 输入上下文预算预设
 	OutputPresets    []string `json:"outputPresets"` // 输出预算预设
+	// ListenAddr 监听地址：空或 127.0.0.1 = 仅本机可访问（默认，安全）；
+	// 填 0.0.0.0 则局域网可访问（需配合管理后台登录保护）。修改后重启生效。
+	ListenAddr string `json:"listenAddr"`
 	// 全局自定义 User-Agent：转发到上游时使用的请求头，覆盖 Go 默认的 go-http-client/1.1
 	UserAgent string `json:"userAgent"`
 	// FailoverTimeout 主备路由单节点请求超时（秒），默认 60；超时无响应则顺延下一个站点

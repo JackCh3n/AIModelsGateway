@@ -12,20 +12,21 @@ import (
 
 func main() {
 	port := flag.Int("port", 3458, "服务端口")
+	listen := flag.String("listen", "", "监听地址，如 127.0.0.1 或 0.0.0.0（默认从配置读取，配置为空则为 127.0.0.1）")
 	startMode := flag.Bool("start", false, "编译+启动+打开浏览器")
 	flag.Parse()
 
 	if *startMode {
-		buildAndStart(*port)
+		buildAndStart(*port, *listen)
 		return
 	}
 
-	if err := startServer(*port); err != nil {
+	if err := startServer(*port, *listen); err != nil {
 		log.Fatalf("服务器启动失败: %v", err)
 	}
 }
 
-func buildAndStart(port int) {
+func buildAndStart(port int, listen string) {
 	exe := "aimodels.exe"
 	if runtime.GOOS != "windows" {
 		exe = "./aimodels"
@@ -56,7 +57,11 @@ func buildAndStart(port int) {
 		fmt.Println("服务已在运行。")
 	} else {
 		fmt.Println("启动服务...")
-		startCmd := exec.Command(exe, "-port", fmt.Sprintf("%d", port))
+		args := []string{"-port", fmt.Sprintf("%d", port)}
+		if listen != "" {
+			args = append(args, "-listen", listen)
+		}
+		startCmd := exec.Command(exe, args...)
 		startCmd.Stdout = os.Stdout
 		startCmd.Stderr = os.Stderr
 		if err := startCmd.Start(); err != nil {
