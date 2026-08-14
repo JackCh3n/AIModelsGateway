@@ -2386,10 +2386,16 @@ document.getElementById('errorLogs').innerHTML=lg;
 renderErrorLogPagination(data.page||1,data.pages||0,data.total||0);
 }
 
-// maskKey 展示 Key 前 8 个字符，其余省略（空值显示 -）
+// maskKey 展示 Key 前缀并省略，任何非空 Key 都至少隐藏一部分：
+//   - 空值显示 -
+//   - 1~4 字符：只显示第 1 个字符（如 "s…"）
+//   - 5~8 字符：显示前 4 个字符（如 "skab…"）
+//   - >8 字符：显示前 8 个字符（如 "sk-abc12…"）
 function maskKey(key){
 if(!key)return'-';
-return key.length<=8?key:key.slice(0,8)+'…';
+if(key.length<=4)return key.slice(0,1)+'…';
+if(key.length<=8)return key.slice(0,4)+'…';
+return key.slice(0,8)+'…';
 }
 
 // toggleErrKey 点击小眼睛图标在「前缀/完整」之间切换 API Key 显示
