@@ -58,6 +58,32 @@ func loadConfigFromFile() {
 		return
 	}
 
+	normalizeConfig(&c)
+
+	// 迁移旧 JSON UsageLogs 到 SQLite
+	migrated := false
+	if len(c.UsageLogs) > 0 {
+		initDB()
+		if db != nil {
+			log.Printf("[migrate] 迁移 %d 条日志到 SQLite", len(c.UsageLogs))
+			for _, l := range c.UsageLogs {
+				dbAddUsageLog(l)
+			}
+			c.UsageLogs = nil
+			migrated = true
+		}
+	}
+
+	c.idx = buildIndex(&c)
+	configPtr.Store(&c)
+
+	if migrated {
+		go persistConfig(&c)
+	}
+}
+
+// normalizeConfig 补齐配置的默认值与字段初始化（加载与还原共用）
+func normalizeConfig(c *Config) {
 	if c.Providers == nil {
 		c.Providers = []Provider{}
 	}
@@ -93,27 +119,22 @@ func loadConfigFromFile() {
 			}}
 		}
 	}
+}
 
-	// 迁移旧 JSON UsageLogs 到 SQLite
-	migrated := false
-	if len(c.UsageLogs) > 0 {
-		initDB()
-		if db != nil {
-			log.Printf("[migrate] 迁移 %d 条日志到 SQLite", len(c.UsageLogs))
-			for _, l := range c.UsageLogs {
-				dbAddUsageLog(l)
-			}
-			c.UsageLogs = nil
-			migrated = true
-		}
+// restoreConfig 用备份 JSON 整体替换当前配置并持久化（一键还原）
+func restoreConfig(data []byte) error {
+	var c Config
+	if err := json.Unmarshal(data, &c); err != nil {
+		return fmt.Errorf("配置 JSON 解析失败: %v", err)
 	}
-
+	if c.Providers == nil && c.APIKeys == nil && c.Aliases == nil && c.Failovers == nil {
+		return fmt.Errorf("无效的配置备份（缺少 providers/apiKeys/aliases/failovers 字段）")
+	}
+	normalizeConfig(&c)
 	c.idx = buildIndex(&c)
 	configPtr.Store(&c)
-
-	if migrated {
-		go persistConfig(&c)
-	}
+	persistConfig(&c)
+	return nil
 }
 
 // buildIndex 构建预计算索引，将热路径 O(n) 查找优化为 O(1)

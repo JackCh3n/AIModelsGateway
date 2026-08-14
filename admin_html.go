@@ -300,6 +300,12 @@ tr:hover{background:var(--hover)}
 </div>
 </div>
 <button class="btn btn-primary" onclick="saveSettings()">保存设置</button>
+<div style="display:flex;gap:8px;margin-top:16px;align-items:center;flex-wrap:wrap">
+<button class="btn btn-outline" onclick="backupConfig()">💾 备份配置</button>
+<button class="btn btn-outline" onclick="document.getElementById('restoreFile').click()">📥 还原配置</button>
+<input type="file" id="restoreFile" accept=".json,application/json" style="display:none" onchange="restoreConfig(event)">
+<span style="font-size:12px;color:var(--muted)">备份为完整 JSON（站点/Key/路由/设置），可下载保存</span>
+</div>
 </div>
 <div class="card">
 <div class="card-title">🔥 狂暴模式 <span id="rageStatus" class="badge badge-disabled" style="margin-left:8px">未启用</span></div>
@@ -2793,6 +2799,32 @@ document.getElementById(inputId).value='';
 renderPresetEditors();
 }
 }
+}
+
+// 一键备份：下载完整配置 JSON
+function backupConfig(){
+window.location.href=API+'/backup';
+toast('正在下载配置文件','success');
+}
+
+// 一键还原：上传备份 JSON 整体替换当前配置
+async function restoreConfig(event){
+const file=event.target.files[0];
+if(!file)return;
+if(!confirm('还原将覆盖当前全部配置（站点/Key/路由/设置），确定继续？')){
+event.target.value='';
+return;
+}
+const text=await file.text();
+const res=await fetch(API+'/restore',{method:'POST',headers:{'Content-Type':'application/json'},body:text});
+if(res.ok){
+toast('配置已还原','success');
+setTimeout(()=>location.reload(),800);
+}else{
+const err=await res.json().catch(()=>({}));
+toast('还原失败: '+(err.error||''),'error');
+}
+event.target.value='';
 }
 
 async function saveSettings(){

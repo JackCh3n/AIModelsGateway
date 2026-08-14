@@ -692,6 +692,40 @@ func registerAdminRoutes(mux *http.ServeMux) {
 		writeJSON(w, http.StatusOK, p)
 	}))
 
+	// 一键全量备份/还原：GET /admin/api/backup 下载完整配置；POST /admin/api/restore 整体还原
+	mux.HandleFunc("/admin/api/backup", corsHandler(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != "GET" {
+			writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "GET required"})
+			return
+		}
+		cfg := loadConfig()
+		data, err := json.MarshalIndent(cfg, "", "  ")
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Content-Disposition", `attachment; filename="aimodels_backup.json"`)
+		w.Write(data)
+	}))
+
+	mux.HandleFunc("/admin/api/restore", corsHandler(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != "POST" {
+			writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "POST required"})
+			return
+		}
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "read body: " + err.Error()})
+			return
+		}
+		if err := restoreConfig(body); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+	}))
+
 	// 一键获取模型: POST /admin/api/providers/fetch-models
 	mux.HandleFunc("/admin/api/providers/fetch-models", corsHandler(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != "POST" {
